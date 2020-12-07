@@ -49,38 +49,9 @@ def _search_sorted_inclusive(a, v):
         a.searchsorted(v[-1:], 'right')
     ))
 
-def histogram(a, bins=10, weights=None):
-    r"""
-    Compute the histogram of a set of data. Taken from numpy and simplified to our case
-
-    """
-    # We set a block size, as this allows us to iterate over chunks when
-    # computing histograms, to minimize memory usage.
-    BLOCK = 65536
-
-    # specializing to non-uniform bins version from numpy here
-
-    # Compute via cumulative histogram
-    cum_n = np.zeros(bins.shape, weights.dtype)
-    zero = np.zeros(1, dtype=weights.dtype)
-    for i in range(0, len(a), BLOCK):
-        tmp_a = a[i:i+BLOCK]
-        tmp_w = weights[i:i+BLOCK]
-        sorting_index = np.argsort(tmp_a)
-        sa = tmp_a[sorting_index]
-        sw = tmp_w[sorting_index]
-        cw = np.concatenate((zero, sw.cumsum()))
-        bin_index = _search_sorted_inclusive(sa, bins)
-        cum_n += cw[bin_index]
-
-    n = np.diff(cum_n)
-
-    return n
-
-
 def histogram_multi(a, bins=10, weight_matrix=None):
     r"""
-    Compute the histogram of a set of data. Taken from numpy and simplified to our case
+    Compute the histogram of a set of data. Taken from numpy and modified to use multiple weihgts at once
 
     """
     # We set a block size, as this allows us to iterate over chunks when
