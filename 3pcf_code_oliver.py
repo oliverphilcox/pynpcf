@@ -166,6 +166,8 @@ end_time=time.time()
 
 print("\ntime to throw",ngal,"random galaxies, shift them, and place them in an array= (*)",end_time-start_time)
 
+print("shouldn't this contain particle weights also??")
+
 start_time=time.time()
 #put galaxies in a tree
 tree=spatial.cKDTree(galcoords,leafsize=3000)
