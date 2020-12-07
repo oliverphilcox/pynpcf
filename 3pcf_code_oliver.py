@@ -82,13 +82,25 @@ def histogram_multi(a, bins=10, weight_matrix=None):
 #This controls if you want to read in data points from a file. I've provided a sample file, and we will try this during the tutorial.
 read_from_file=1
 
+infile = 'sample_feb27_unity_weights_rescale400_first500.dat'
+infile = 'patchy_gal_pos.txt'
+cut_number = 50000 # maximum number of galaxies
+
+### LOAD IN DATA
+
 if read_from_file:
-    boxsize = 400. #size of box used in sample data file.
+    boxsize = 2300. #size of box used in sample data file.
     rescale = 1. #if you want to rescale the box (unity if not).
     boxsize *= rescale #this is important so the periodic duplicates are made correctly.
-    galx, galy, galz, weights = np.loadtxt('sample_feb27_unity_weights_rescale400_first500.dat',unpack=True) #Put your local file title here.
+    galx, galy, galz, weights = np.loadtxt(infile,unpack=True)[:,:cut_number] #Put your local file title here.
     galx, galy, galz = galx*rescale, galy*rescale, galz*rescale
-    print("read galaxies from file and converted using boxsize")
+
+    width_x = np.max(galx)-np.min(galx)
+    width_y = np.max(galy)-np.min(galy)
+    width_z = np.max(galz)-np.min(galz)
+    print("read galaxies from file")
+    print("galaxy widths: [%.2e, %.2e, %.2e] vs boxsize %.2e"%(width_x,width_y,width_z,boxsize))
+    assert(max([width_x,width_y,width_z])<boxsize)
     print("number in file=",len(galx))
 
 #exit()
@@ -108,10 +120,11 @@ if read_from_file:
     ngal=len(galx)
 else:
     ngal=50
+
 #checked this program with counting for ngal=500, seed=35 and seed=1.
-rmax=np.sqrt(3.)*5.
+rmax=np.sqrt(3.)*50. # *5
 rmin=1e-5
-nbins=3
+nbins=30 # 3
 deltr = float(rmax-rmin)/nbins
 binarr=np.mgrid[0:nbins+1]*deltr
 
@@ -176,7 +189,7 @@ print("\ntime to put",ngal,"random galaxies in tree=(*)",end_time-start_time)
 
 #Choose to work on first nperit galaxies.
 start_time=time.time()
-nperit=ngal//1 #1 for just looking at one galaxy to see more granular timings. ngal/100 gives 20000/10=2000 per iteration.
+nperit=ngal//10 #1 for just looking at one galaxy to see more granular timings. ngal/100 gives 20000/10=2000 per iteration.
 totalits=ngal//nperit #5#ngal/nperit#5 for testing leaf size if I want to iterate over 1000 galaxies.
 count=0
 querytime=0.
@@ -184,7 +197,7 @@ complextime=0.
 realtime=0.
 first_it = 1 # if this is the first iteration
 for i in range(0,totalits): #do nperit galaxies at a time for totalits total iterations
-    print("group number=",i)
+    print("group number = %d of %d"%(i+1,totalits))
     centralgals=galcoords[i*nperit:(i+1)*nperit] #select out central galaxies to use; note central galaxies must be first in list of coordinates including shift, which they will be by construction.
     print("len centralgals=", len(centralgals))
     print("using galaxies from", i*nperit, "to", (i+1)*nperit-1)
@@ -205,8 +218,8 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         #could I vectorize this so it's doing all 3 at the same time? no reason it needs to wait on x before doing y!  reduce time by ~1/3!
         ball_temp=ball[w]
 
-        # if len(ball_temp)==0:
-        #     continue
+        if len(ball_temp)==0:
+            continue
 
         galxtr, galytr, galztr=galcoords[ball_temp][:,0]-centralgals[w][0],galcoords[ball_temp][:,1]-centralgals[w][1],galcoords[ball_temp][:,2]-centralgals[w][2]
         #galytr=galcoords[ball[w]][:,1]-centralgals[w][1]
