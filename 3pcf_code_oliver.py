@@ -94,6 +94,7 @@ if read_from_file:
 #exit()
 
 verb=0 # if True, print useful(?) messages throughout
+run_tests = 0 # if True, run some tests of the code
 
 numell=11
 #throw randoms for galaxies in box.
@@ -179,6 +180,7 @@ count=0
 querytime=0.
 complextime=0.
 realtime=0.
+first_it = 1 # if this is the first iteration
 for i in range(0,totalits): #do nperit galaxies at a time for totalits total iterations
     print("group number=",i)
     centralgals=galcoords[i*nperit:(i+1)*nperit] #select out central galaxies to use; note central galaxies must be first in list of coordinates including shift, which they will be by construction.
@@ -246,21 +248,19 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         end_time_transf=time.time()
         transftime=end_time_transf-start_time_transf+transftime
         start_time_hist=time.time()
-        y00=.5*(1./np.pi)**.5*histogram(rgals,bins=binarr,weights=np.ones_like(rgals))
-        complex_test_start=time.time()
-        y1m1=.5*(3./(2.*np.pi))**.5*histogram(rgals,bins=binarr,weights=xmiydivr) #this just gives histogram y values; [1] would give bin edges with length of [0] + 1.
-        complex_test_end=time.time()
-        complextime=complex_test_end-complex_test_start+complextime
-        real_test_start=time.time()
-        y1m1test=.5*(3./(2.*np.pi))**.5*(histogram(rgals,bins=binarr,weights=xdivr)-1j*histogram(rgals,bins=binarr,weights=ydivr))
-        real_test_end=time.time()
-        realtime=real_test_end-real_test_start+realtime
+
+        if run_tests:
+            y00=.5*(1./np.pi)**.5*histogram(rgals,bins=binarr,weights=np.ones_like(rgals))
+            complex_test_start=time.time()
+            y1m1=.5*(3./(2.*np.pi))**.5*histogram(rgals,bins=binarr,weights=xmiydivr) #this just gives histogram y values; [1] would give bin edges with length of [0] + 1.
+            complex_test_end=time.time()
+            complextime=complex_test_end-complex_test_start+complextime
+            real_test_start=time.time()
+            y1m1test=.5*(3./(2.*np.pi))**.5*(histogram(rgals,bins=binarr,weights=xdivr)-1j*histogram(rgals,bins=binarr,weights=ydivr))
+            real_test_end=time.time()
+            realtime=real_test_end-real_test_start+realtime
 
         if verb: print("isn't there a way to automate these?")
-
-        # ordering: [y_3m3, y_3m2, y_3m1, y_30] etc.
-
-        y0 = [y00]
 
         # accumulate all Legendre weights:
         all_weights = np.vstack([# ell = 0
@@ -351,21 +351,18 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         histtime=end_time_hist-start_time_hist+histtime
         count=count+1
         start_time_binning=time.time()
-        bin_val = np.zeros(nbins*nbins)
-        ii = 0
-        for bin1 in range(nbins):
-            for bin2 in range(nbins):#this computes only upper diagonal of matrix and avoids doing diagonal---so no double counting.
-            #for bin2 in range(bin1+1):#this computes only upper diagonal of matrix and avoids doing diagonal---so no double counting.
-                #print "bin1, bin2=", bin1, bin2
-                bin_val[ii] = (bin1+.5)*(bin2+.5)
 
-                if verb: print("oliver: can we do all these bins at once?")
-                # sum up m = 0 (final element) separately
-                i_start = 0
-                for l_i in range(numell):
-                    zetas[l_i][bin1,bin2] += np.sum([y_all[i_start+i][bin1]*y_all[i_start+i][bin2].conjugate()+y_all[i_start+i][bin1].conjugate()*y_all[i_start+i][bin2] for i in range(l_i)]) + y_all[i_start+l_i][bin1]*y_all[i_start+l_i][bin2].conjugate()
-                    i_start += l_i+1
-                ii += 1
+        # compute bin centers on the first iteration only
+        if first_it:
+            bin_val = np.ravel(np.outer(np.arange(nbins)+0.5,np.arange(nbins)+0.5))
+            first_it = 0
+
+        # Sum up all ell (using outer products to do all bins at once)
+        i_start = 0
+        for l_i in range(numell):
+            tmp_sum = np.sum([np.outer(y_all[i_start+j],y_all[i_start+j].conjugate()) for j in range(l_i)],axis=0)+0.5*np.outer(y_all[i_start+l_i],y_all[i_start+l_i].conjugate())
+            zetas[l_i] += tmp_sum + tmp_sum.conjugate()
+            i_start += l_i+1
 
         end_time_binning=time.time()
         bintime=end_time_binning-start_time_binning+bintime
