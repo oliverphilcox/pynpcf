@@ -128,31 +128,41 @@ start_time = time.time()
 
 ### WEIGHTING MATRIX #############
 
-# compute weighting matrix for 3pcf (inefficiently coded, but not rate limiting)
-weights_3pcf = np.zeros(((numell+1)**2,(numell+1)**2))
+if os.path.exists('weights_3pcf_n%d.npy'%numell):
+    print("Loading 3PCF weights from file")
+    weights_3pcf = np.load('weights_3pcf_n%d.npy'%numell)
+else:
+    # compute weighting matrix for 3pcf (inefficiently coded, but not rate limiting)
+    weights_3pcf = np.zeros(((numell+1)**2,(numell+1)**2))
 
-if verb: print("note matrix could be a lot less sparse!")
-for ell_1 in range(numell):
-    for m_1 in range(-ell_1,ell_1+1):
-        for ell_2 in range(numell):
-            for m_2 in range(-ell_2,ell_2+1):
-                # enforce (ell_i = ell_j) and m_i = m_j,
-                if not include_norm3:
-                    weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(-m_1)
-                else:
-                    weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(ell_1-m_1)/np.sqrt(2.*ell_1+1.)
+    if verb: print("note matrix could be a lot less sparse!")
+    for ell_1 in range(numell):
+        for m_1 in range(-ell_1,ell_1+1):
+            for ell_2 in range(numell):
+                for m_2 in range(-ell_2,ell_2+1):
+                    # enforce (ell_i = ell_j) and m_i = m_j,
+                    if not include_norm3:
+                        weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(-m_1)
+                    else:
+                        weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(ell_1-m_1)/np.sqrt(2.*ell_1+1.)
+    np.save('weights_3pcf_n%d'%numell,weights_3pcf)
 
-# compute weighting matrix for 4pcf (inefficiently coded, but not rate limiting)
-weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)**2))
+if os.path.exists('weights_4pcf_n%d.npy'%numell):
+    print("Loading 4PCF weights from file")
+    weights_4pcf = np.load('weights_4pcf_n%d.npy'%numell)
+else:
+    # compute weighting matrix for 4pcf (inefficiently coded, but not rate limiting)
+    weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)**2))
 
-print("3j function computation takes ages...")
-for ell_1 in range(numell):
-    for m_1 in range(-ell_1,ell_1+1):
-        for ell_2 in range(numell):
-            for m_2 in range(-ell_2,ell_2+1):
-                for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
-                    m_3 = -m_1-m_2 # from triangle condition
-                    weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3**2+m_3+ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)
+    print("3j function computation takes ages...")
+    for ell_1 in range(numell):
+        for m_1 in range(-ell_1,ell_1+1):
+            for ell_2 in range(numell):
+                for m_2 in range(-ell_2,ell_2+1):
+                    for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
+                        m_3 = -m_1-m_2 # from triangle condition
+                        weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3**2+m_3+ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)
+    np.save('weights_4pcf_n%d'%numell,weights_4pcf)
 
 end_time = time.time()
 print("\ntime to define 3PCF + 4PCF weighting matrices=",end_time-start_time)
@@ -369,53 +379,73 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         ## 3PCF Summation
         t3pt = time.time()
 
-        # sum up all ell (most basic way with weights)
+        # sum up all ell (simply with weights)
         for l1 in range(numell):
-            for l2 in range(numell):
-                if l1!=l2: continue
-                for m1 in range(-l1,l1+1):
-                    a_l1m1 = y_all[l1*(l1+1)//2+l1-np.abs(m1)]
-                    if m1>0:
-                        a_l1m1 = a_l1m1.conjugate()*(-1.)**m1
-                    m2 = -m1
-                    a_l2m2 = y_all[l2*(l2+1)//2+l2-np.abs(m2)]
-                    if m2>0:
-                        a_l2m2 = a_l2m2.conjugate()*(-1.)**m2
-                    zeta3[l1] += np.outer(a_l1m1,a_l2m2)*weights_3pcf[l1**2+m1+l1,l2**2+m2+l2]
+            l2 = l1
+            for m1 in range(-l1,l1+1):
+                m2 = -m1
+                if m1<0:
+                    a_l1m1 = y_all[l1*(l1+1)//2+l1+m1]
+                    a_l2m2 = a_l1m1.conjugate()*(-1.)**m1
+                else:
+                    a_l2m2 = y_all[l2*(l2+1)//2+l2+m2]
+                    a_l1m1 = a_l2m2.conjugate()*(-1.)**m2
+                ## TODO: also add symmetry to this from (m1 -> -m1) giving a complex conjugate term
+                zeta3[l1] += np.outer(a_l1m1,a_l2m2)*weights_3pcf[l1**2+m1+l1,l2**2+m2+l2]
         t3pt = time.time()-t3pt
 
         ## 4PCF Summation
         t4pt = time.time()
 
-        # sum up all ell (most basic way with weights)
+        # sum up all ell (with weights)
         for l1 in range(numell):
+            # create local copies of weights and alm
+            yl1_cut = y_all[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
+            weights_cut1 = weights_4pcf[l1**2:(l1+1)**2]
+
             for l2 in range(numell):
+                yl2_cut = y_all[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
+                weights_cut2 = weights_cut1[:,l2**2:(l2+1)**2]
+
                 for l3 in range(np.abs(l1-l2),min(l1+l2+1,numell)):
                     # check triangle conditions are satisfied
                     if l3<np.abs(l1-l2): continue
                     if l3>l1+l2: continue
+                    yl3_cut = y_all[l3*(l3+1)//2:(l3+1)*(l3+2)//2]
+                    weights_cut3 = weights_cut2[:,:,l3**2:(l3+1)**2]
 
                     for m1 in range(-l1,l1+1):
                         # load a_l1m1
-                        a_l1m1 = y_all[l1*(l1+1)//2+l1-np.abs(m1)]
-                        if m1>0:
-                            a_l1m1 = a_l1m1.conjugate()*(-1.)**m1
+                        if m1<0:
+                            a_l1m1 = yl1_cut[l1+m1]
+                        else:
+                            a_l1m1 = yl1_cut[l1-m1].conjugate()*(-1.)**m1
 
                         for m2 in range(-l2,l2+1):
                             # load a_l2m2
-                            a_l2m2 = y_all[l2*(l2+1)//2+l2-np.abs(m2)]
-                            if m2>0:
-                                a_l2m2 = a_l2m2.conjugate()*(-1.)**m2
+                            if m2<0:
+                                a_l2m2 = yl2_cut[l2+m2]
+                            else:
+                                a_l2m2 = yl2_cut[l2-m2].conjugate()*(-1.)**m2
+
 
                             # set m3 from m1 + m2 + m3 = 0
                             m3 = -m1-m2
+                            if np.abs(m3)>l3: continue
+
+                            this_weight = weights_cut3[m1+l1,m2+l2,m3+l3]
+                            if this_weight==0: continue
+
                             # load a_l3m3
-                            a_l3m3 = y_all[l3*(l3+1)//2+l3-np.abs(m3)]
-                            if m3>0:
-                                a_l3m3 = a_l3m3.conjugate()*(-1.)**m3
+                            if m3<0:
+                                a_l3m3 = yl3_cut[l3+m3]
+                            else:
+                                a_l3m3 = yl3_cut[l3-m3].conjugate()*(-1.)**m3
 
-                            zeta4[l1,l2,l3] += np.einsum('i,j,k->ijk',a_l1m1,a_l2m2,a_l3m3)*weights_4pcf[l1**2+m1+l1,l2**2+m2+l2,l3**2+m3+l3]
-
+                            # NB: the contribution from (-m1, -m2) is just the conjugate of that from (m1, m2)
+                            # this can probably reduce the number of summations by ~ 2x
+                            # todo: implement this
+                            zeta4[l1,l2,l3] += np.einsum('i,j,k->ijk',a_l1m1,a_l2m2,a_l3m3)*weights_cut3[m1+l1,m2+l2,m3+l3]
         t4pt = time.time()-t4pt
 
         print("3pcf binning time: %.2e \t 4pcf binning time: %.2e"%(t3pt,t4pt))
@@ -434,10 +464,7 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         #     #    for j in range(l_i):
         #     #        print('%d'%(j-l_i),np.outer(y_all[i_start+j],y_all[i_start+j].conjugate())[3,5])
         #     tmp_sum = np.sum([np.outer(y_all[i_start+j],y_all[i_start+j].conjugate()) for j in range(l_i)],axis=0)+0.5*np.outer(y_all[i_start+l_i],y_all[i_start+l_i].conjugate())
-        #     if include_norm3:
-        #         zeta3_tmp[l_i] += (-1.)**l_i/np.sqrt(2.*l_i+1.)*(tmp_sum + tmp_sum.conjugate())
-        #     else:
-        #         zeta3_tmp[l_i] += tmp_sum + tmp_sum.conjugate()
+        #     zeta3_tmp[l_i] += tmp_sum + tmp_sum.conjugate()
         #     i_start += l_i+1
         # t2 = time.time()-t2
         #
