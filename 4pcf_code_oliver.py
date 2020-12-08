@@ -1,37 +1,11 @@
-#Code for DESI Virtual Meeting Tutorial: December 4, 2020.
+#Code for NPCFs - Zack Slepian + Oliver Philcox
 ##########################################load needed modules for python#######################################################################
 #doing basic math
 import numpy as np
-import scipy as sp
-#for sine integral
-from scipy.special import *
-#parsing arguments that are given in command line
-import argparse
-#plotting
-import matplotlib.pyplot as plt
-plt.matplotlib.use('PDF')
-import matplotlib.colors as mcolors
-from matplotlib.colors import Normalize
-#interpolating
-from scipy.interpolate import interp1d
-#for getting latex characters in plot titles
-from matplotlib import rc
-rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
-plt.rcParams['ps.useafm'] = True
-rc('font',**{'family':'sans-serif','sans-serif':['Helvetica']})
-plt.rcParams['pdf.fonttype'] = 42
-#plotting a density plot (2-d)
-from numpy import exp,arange
-from pylab import meshgrid,cm,imshow,contour,clabel,colorbar,axis,title,show
-#interpolation to set up functions for 2d plots
-from scipy.interpolate import interp1d
-from scipy.interpolate import interp2d
-#for special functions: spherical bessel functions and Legendre polynomials
-import scipy.special as sp
-#to save multipage pdfs
-from matplotlib.backends.backend_pdf import PdfPages
-#for random numbers
-import random as rm
+#3j manipulations
+from sympy.physics.wigner import wigner_3j
+#system operations
+import os, sys
 #for timing
 import time
 #kd tree
@@ -62,7 +36,7 @@ def histogram_multi(a, bins=10, weight_matrix=None):
 
     # Compute via cumulative histogram
     cum_n = np.zeros((weight_matrix.shape[0],bins.shape[0]), weight_matrix.dtype)
-    zero = np.zeros((weight_matrix.shape[0],1), dtype=weights.dtype)
+    zero = np.zeros((weight_matrix.shape[0],1), dtype=weight_matrix.dtype)
     for i in range(0, len(a), BLOCK):
         tmp_a = a[i:i+BLOCK]
         tmp_w = weight_matrix[:,i:i+BLOCK]
@@ -77,64 +51,67 @@ def histogram_multi(a, bins=10, weight_matrix=None):
 
     return n
 
-
 #######################################################setup definitions#######################################################################
-#This controls if you want to read in data points from a file. I've provided a sample file, and we will try this during the tutorial.
-read_from_file=1
 
-infile = 'sample_feb27_unity_weights_rescale400_first500.dat'
+### PARAMETERS
+#infile = 'sample_feb27_unity_weights_rescale400_first500.dat'
 infile = 'patchy_gal_pos.txt'
-cut_number = 50000 # maximum number of galaxies
+cut_number = 1000 # maximum number of galaxies to read in
+boxsize = 2500. #size of box used in sample data file.
+rescale = 1. #if you want to rescale the box (unity if not).
+no_weights = True # replace weights with unity
+include_norm3 = True # if True, include factor of (-1)^ell / sqrt[2ell+1] for 3PCF for consistency with NPCF
+
+# Binning
+rmax=np.sqrt(3.)*100. # *5
+rmin=1e-5
+nbins=10 # 3
+numell = 11
 
 ### LOAD IN DATA
+if not os.path.exists(infile):
+    raise Exception("Infile %s does not exist!"%infile)
+boxsize *= rescale #this is important so the periodic duplicates are made correctly.
+galx, galy, galz, galw = np.loadtxt(infile,unpack=True)[:,:cut_number]
+galx, galy, galz = galx*rescale, galy*rescale, galz*rescale
+if no_weights:
+    galw  = np.ones_like(galw)
 
-if read_from_file:
-    boxsize = 2500. #size of box used in sample data file.
-    rescale = 1. #if you want to rescale the box (unity if not).
-    boxsize *= rescale #this is important so the periodic duplicates are made correctly.
-    galx, galy, galz, weights = np.loadtxt(infile,unpack=True)[:,:cut_number] #Put your local file title here.
-    galx, galy, galz = galx*rescale, galy*rescale, galz*rescale
-
-    width_x = np.max(galx)-np.min(galx)
-    width_y = np.max(galy)-np.min(galy)
-    width_z = np.max(galz)-np.min(galz)
-    print("read galaxies from file")
-    print("galaxy widths: [%.2e, %.2e, %.2e] vs boxsize %.2e"%(width_x,width_y,width_z,boxsize))
-    assert(max([width_x,width_y,width_z])<boxsize)
-    print("number in file=",len(galx))
+width_x = np.max(galx)-np.min(galx)
+width_y = np.max(galy)-np.min(galy)
+width_z = np.max(galz)-np.min(galz)
+print("read %d galaxies from file with average weight %.2f"%(len(galx),np.mean(galw)))
+print("galaxy widths: [%.2e, %.2e, %.2e] vs boxsize %.2e"%(width_x,width_y,width_z,boxsize))
+assert(max([width_x,width_y,width_z])<boxsize)
+print("number in file=",len(galx))
 
 #exit()
 
+### Verbosity / output options
 verb=0 # if True, print useful(?) messages throughout
 run_tests = 0 # if True, run some tests of the code
+print_output = 0 # if True, print the output in the same format as the C++ code
 
-numell=11
-#throw randoms for galaxies in box.
-#One needs to choose number of galaxies. I found 10,000 was the limit for a 2015 Macbook Air, likely one can do a bit more on a more modern machine.
 start_time=time.time()
 linspace=0.
 
 eightpi_sq=8.*np.pi**2
 eps=1e-8
-if read_from_file:
-    ngal=len(galx)
-else:
-    ngal=50
+ngal=len(galx)
 
-#checked this program with counting for ngal=500, seed=35 and seed=1.
-rmax=np.sqrt(3.)*100. # *5
-rmin=1e-5
-nbins=10 # 3
+#### SPECIFY BINNING
 deltr = float(rmax-rmin)/nbins
 binarr=np.mgrid[0:nbins+1]*deltr
+n_mult = numell*(numell+1)//2
 
-zetas = [np.zeros((nbins,nbins))+0j for _ in range(numell)]
+# Output array for 3PCF
+zeta3 = np.zeros((numell,nbins,nbins))+0j
+zeta4 = np.zeros((numell,numell,numell,nbins,nbins,nbins))+0j
 
 histtime=0
 bintime=0
 transftime=0
 end_time=time.time()
-
 
 def shiftbox(galx,galy,galz,shiftbox,doxshift,doyshift,dozshift):
     galxsh=galx+doxshift*boxsize
@@ -145,23 +122,45 @@ def shiftbox(galx,galy,galz,shiftbox,doxshift,doyshift,dozshift):
 
     return galcoordssh
 
-
 print("\ntime to set constants and bins=",end_time-start_time)
+
+start_time = time.time()
+
+### WEIGHTING MATRIX #############
+
+# compute weighting matrix for 3pcf (inefficiently coded, but not rate limiting)
+weights_3pcf = np.zeros(((numell+1)**2,(numell+1)**2))
+
+if verb: print("note matrix could be a lot less sparse!")
+for ell_1 in range(numell):
+    for m_1 in range(-ell_1,ell_1+1):
+        for ell_2 in range(numell):
+            for m_2 in range(-ell_2,ell_2+1):
+                # enforce (ell_i = ell_j) and m_i = m_j,
+                if not include_norm3:
+                    weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(-m_1)
+                else:
+                    weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(ell_1-m_1)/np.sqrt(2.*ell_1+1.)
+
+# compute weighting matrix for 4pcf (inefficiently coded, but not rate limiting)
+weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)**2))
+
+print("3j function computation takes ages...")
+for ell_1 in range(numell):
+    for m_1 in range(-ell_1,ell_1+1):
+        for ell_2 in range(numell):
+            for m_2 in range(-ell_2,ell_2+1):
+                for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
+                    m_3 = -m_1-m_2 # from triangle condition
+                    weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3**2+m_3+ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)
+
+end_time = time.time()
+print("\ntime to define 3PCF + 4PCF weighting matrices=",end_time-start_time)
 
 start_time=time.time()
 
-'''
-#Save galaxy coordinates to a file for cross-checking later if you'd like.
-file = open("gal_coords_3pcf_test.txt", "w")
-count=0
-for index in range(0,ngal,1):
-    print >>file, '%5.5f %5.5f %5.5f %5.5f' % (galx[index],galy[index],galz[index], 1.0)#add a fourth column with weights to compare with 3PCF C++ code, which looks to take in weights.
-file.close()
-print "coordinates written to file"
-'''
-
-#now loop over shiftbox to append virtual boxes to coordinate list. NB: removed zipping here for simplicity
-new_galx, new_galy, new_galz = galx.ravel(), galy.ravel(), galz.ravel()
+#now loop over shiftbox to append virtual boxes to coordinate list.
+new_galx, new_galy, new_galz, new_galw = galx.ravel(), galy.ravel(), galz.ravel(), galw.ravel()
 for doxshift in (-1,1,0):
     for doyshift in (-1,1,0):
         for dozshift in (-1,1,0):
@@ -173,13 +172,12 @@ for doxshift in (-1,1,0):
                 new_galx = np.append(new_galx,shift_gal[0])
                 new_galy = np.append(new_galy,shift_gal[1])
                 new_galz = np.append(new_galz,shift_gal[2])
+                new_galw = np.append(new_galw,galw)
 
-galcoords = np.asarray([new_galx.ravel(),new_galy.ravel(),new_galz.ravel()]).T
+galcoords = np.asarray([new_galx.ravel(),new_galy.ravel(),new_galz.ravel(),new_galw.ravel()]).T
 end_time=time.time()
 
-print("\ntime to throw",ngal,"random galaxies, shift them, and place them in an array= (*)",end_time-start_time)
-
-print("shouldn't this contain particle weights also??")
+print("\ntime to load",ngal,"galaxies, shift them, and place them in an array= (*)",end_time-start_time)
 
 start_time=time.time()
 #put galaxies in a tree
@@ -189,12 +187,13 @@ print("\ntime to put",ngal,"random galaxies in tree=(*)",end_time-start_time)
 
 #Choose to work on first nperit galaxies.
 start_time=time.time()
-nperit=ngal//5 #1 for just looking at one galaxy to see more granular timings. ngal/100 gives 20000/10=2000 per iteration.
+nperit=ngal//1 #1 for just looking at one galaxy to see more granular timings. ngal/100 gives 20000/10=2000 per iteration.
 totalits=ngal//nperit #5#ngal/nperit#5 for testing leaf size if I want to iterate over 1000 galaxies.
 count=0
 querytime=0.
 complextime=0.
 realtime=0.
+
 first_it = 1 # if this is the first iteration
 for i in range(0,totalits): #do nperit galaxies at a time for totalits total iterations
     print("group number = %d of %d"%(i+1,totalits))
@@ -208,24 +207,15 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
     querytime=end_time_query-start_time_query+querytime
     for w in range(0,nperit):
         start_time_transf=time.time()
-        #print "bal[w]l=",ball[w]
-        #print "count=",count
-        #print "i*nperit+w=",i*nperit+w
         ball[w].remove(i*nperit+w)
-        #print "ball[w]=",ball[w]
-        #print "galaxy number within its group=",w
         #transform to reference frame of desired central galaxy
-        #could I vectorize this so it's doing all 3 at the same time? no reason it needs to wait on x before doing y!  reduce time by ~1/3!
         ball_temp=ball[w]
 
         if len(ball_temp)==0:
             continue
 
-        galxtr, galytr, galztr=galcoords[ball_temp][:,0]-centralgals[w][0],galcoords[ball_temp][:,1]-centralgals[w][1],galcoords[ball_temp][:,2]-centralgals[w][2]
-        #galytr=galcoords[ball[w]][:,1]-centralgals[w][1]
-        #galztr=galcoords[ball[w]][:,2]-centralgals[w][2]
-        #print ball[w]
-        #print galztr
+        galxtr, galytr, galztr=(galcoords[ball_temp][:,:3]-centralgals[w][:3]).T
+        galwtr = galcoords[ball_temp][:,3]
         rgalssq=galxtr*galxtr+galytr*galytr+galztr*galztr+eps
         rgals=np.sqrt(rgalssq)
         #xmiydivr,xdivr,ydivr,zdivr=(galxtr-1j*galytr)/rgals,galxtr/rgals,galytr/rgals,galztr/rgals #compute (x-iy)/r for galaxies in ball around central
@@ -265,20 +255,21 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         start_time_hist=time.time()
 
         if run_tests:
-            y00=.5*(1./np.pi)**.5*histogram(rgals,bins=binarr,weights=np.ones_like(rgals))
+            y00=.5*(1./np.pi)**.5*histogram(rgals,bins=binarr,weights=galwtr)
             complex_test_start=time.time()
-            y1m1=.5*(3./(2.*np.pi))**.5*histogram(rgals,bins=binarr,weights=xmiydivr) #this just gives histogram y values; [1] would give bin edges with length of [0] + 1.
+            y1m1=.5*(3./(2.*np.pi))**.5*histogram(rgals,bins=binarr,weights=galwtr*xmiydivr) #this just gives histogram y values; [1] would give bin edges with length of [0] + 1.
             complex_test_end=time.time()
             complextime=complex_test_end-complex_test_start+complextime
             real_test_start=time.time()
-            y1m1test=.5*(3./(2.*np.pi))**.5*(histogram(rgals,bins=binarr,weights=xdivr)-1j*histogram(rgals,bins=binarr,weights=ydivr))
+            y1m1test=.5*(3./(2.*np.pi))**.5*(histogram(rgals,bins=binarr,weights=galwtr*xdivr)-1j*histogram(rgals,bins=binarr,weights=galwtr*ydivr))
             real_test_end=time.time()
             realtime=real_test_end-real_test_start+realtime
 
         if verb: print("isn't there a way to automate these?")
 
-        # accumulate all Legendre weights:
-        all_weights = np.vstack([# ell = 0
+        # accumulate all weighted spherical harmonics, including particle weights
+        # these are just the values of a_lm(r) in each bin
+        all_weights = galwtr*np.vstack([# ell = 0
                                  .5*(1./np.pi)**.5*np.ones_like(rgals),
                                  # ell = 1
                                  .5*(3./(2.*np.pi))**.5*xmiydivr,
@@ -360,62 +351,138 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         # histogram all these weights at once
         # this computes the Y_lm coefficients in a single list
         # the ordering is Y_00, Y_{1-1} Y_{10} Y_{2-2} etc.
+        # dimension is (N_mult,N_bin) where N_mult is number of multipoles = (numell)*(numell+1)/2
         y_all = histogram_multi(rgals, bins=binarr, weight_matrix=all_weights)
 
         end_time_hist=time.time()
         histtime=end_time_hist-start_time_hist+histtime
         count=count+1
+
         start_time_binning=time.time()
 
         # compute bin centers on the first iteration only
         if first_it:
+            print('do we actually use these?')
             bin_val = np.ravel(np.outer(np.arange(nbins)+0.5,np.arange(nbins)+0.5))
             first_it = 0
 
+        ## 3PCF Summation
+        t3pt = time.time()
+
+        # sum up all ell (most basic way with weights)
+        for l1 in range(numell):
+            for l2 in range(numell):
+                if l1!=l2: continue
+                for m1 in range(-l1,l1+1):
+                    a_l1m1 = y_all[l1*(l1+1)//2+l1-np.abs(m1)]
+                    if m1>0:
+                        a_l1m1 = a_l1m1.conjugate()*(-1.)**m1
+                    m2 = -m1
+                    a_l2m2 = y_all[l2*(l2+1)//2+l2-np.abs(m2)]
+                    if m2>0:
+                        a_l2m2 = a_l2m2.conjugate()*(-1.)**m2
+                    zeta3[l1] += np.outer(a_l1m1,a_l2m2)*weights_3pcf[l1**2+m1+l1,l2**2+m2+l2]
+        t3pt = time.time()-t3pt
+
+        ## 4PCF Summation
+        t4pt = time.time()
+
+        # sum up all ell (most basic way with weights)
+        for l1 in range(numell):
+            for l2 in range(numell):
+                for l3 in range(np.abs(l1-l2),min(l1+l2+1,numell)):
+                    # check triangle conditions are satisfied
+                    if l3<np.abs(l1-l2): continue
+                    if l3>l1+l2: continue
+
+                    for m1 in range(-l1,l1+1):
+                        # load a_l1m1
+                        a_l1m1 = y_all[l1*(l1+1)//2+l1-np.abs(m1)]
+                        if m1>0:
+                            a_l1m1 = a_l1m1.conjugate()*(-1.)**m1
+
+                        for m2 in range(-l2,l2+1):
+                            # load a_l2m2
+                            a_l2m2 = y_all[l2*(l2+1)//2+l2-np.abs(m2)]
+                            if m2>0:
+                                a_l2m2 = a_l2m2.conjugate()*(-1.)**m2
+
+                            # set m3 from m1 + m2 + m3 = 0
+                            m3 = -m1-m2
+                            # load a_l3m3
+                            a_l3m3 = y_all[l3*(l3+1)//2+l3-np.abs(m3)]
+                            if m3>0:
+                                a_l3m3 = a_l3m3.conjugate()*(-1.)**m3
+
+                            zeta4[l1,l2,l3] += np.einsum('i,j,k->ijk',a_l1m1,a_l2m2,a_l3m3)*weights_4pcf[l1**2+m1+l1,l2**2+m2+l2,l3**2+m3+l3]
+
+        t4pt = time.time()-t4pt
+
+        print("3pcf binning time: %.2e \t 4pcf binning time: %.2e"%(t3pt,t4pt))
+
         # Sum up all ell (using outer products to do all bins at once)
-        i_start = 0
-        for l_i in range(numell):
-            tmp_sum = np.sum([np.outer(y_all[i_start+j],y_all[i_start+j].conjugate()) for j in range(l_i)],axis=0)+0.5*np.outer(y_all[i_start+l_i],y_all[i_start+l_i].conjugate())
-            zetas[l_i] += tmp_sum + tmp_sum.conjugate()
-            i_start += l_i+1
+
+        # if verb: print("NB: second method is much faster but harder to generalize!!")
+        #
+        # print("")
+        # ## MOST EFFICIENT VERSION
+        # zeta3_tmp = np.zeros_like(zeta3)
+        # t2 = time.time()
+        # i_start = 0
+        # for l_i in range(numell):
+        #     #if l_i==4:
+        #     #    for j in range(l_i):
+        #     #        print('%d'%(j-l_i),np.outer(y_all[i_start+j],y_all[i_start+j].conjugate())[3,5])
+        #     tmp_sum = np.sum([np.outer(y_all[i_start+j],y_all[i_start+j].conjugate()) for j in range(l_i)],axis=0)+0.5*np.outer(y_all[i_start+l_i],y_all[i_start+l_i].conjugate())
+        #     if include_norm3:
+        #         zeta3_tmp[l_i] += (-1.)**l_i/np.sqrt(2.*l_i+1.)*(tmp_sum + tmp_sum.conjugate())
+        #     else:
+        #         zeta3_tmp[l_i] += tmp_sum + tmp_sum.conjugate()
+        #     i_start += l_i+1
+        # t2 = time.time()-t2
+        #
+        # print("simple: %.2e, efficient %.2e"%(t3pt,t2))
+        # exit()
+        #
+        ### LEAST EFFICIENT VERSION
+        # # Sum up all relevant ell as a matrix product - this is REALLY slow
+        # #t3 = time.time()
+        # tmp_sum = np.einsum('ia,jb,kij->kab',y_all,y_all.conj(),weights_3pcf)
+        # zeta3 += tmp_sum + tmp_sum.conjugate()
+        # #t4 = time.time()-t3
+        # #print("times: %.2e vs %.2e"%(t2,t4))
 
         end_time_binning=time.time()
         bintime=end_time_binning-start_time_binning+bintime
 
-        #if i==0:
-            #if w==2:
-            #print "centralgals=",centralgals[w][0],centralgals[w][1],centralgals[w][2]
-            #  zeta1save=zeta1*addthmfac[1]/2.
-            #  zeta2save=zeta2*addthmfac[2]/2.
-            #   zeta3save=zeta3*addthmfac[3]/2.
-            #   print zeta1save
-            #   print zeta2save
-            #  print zeta3save
-
 #2.*np.pi this latter factor was to agree with Eisenstein C++ code, which we now know also does not have right normalization factor, but that cancels out in edge correction.
-zetas = [zz*1./(4.*np.pi) for zz in zetas]
+
+if not include_norm3:
+    zeta3 = [zz*1./(4.*np.pi) for zz in zeta3]
 
 print("number of galaxies done=", count)
 
-for i in range(5):
-    print("zeta%d="%i,zetas[i])
+if print_output:
+    for i in range(5):
+        print("zeta%d="%i,zeta3[i])
 
 postfix = 'DESI_Tutorial_results' #Use this to title arrays you save.
 for i in range(numell):
-    np.save('zeta%dtest_%s'%(i,postfix),zetas[i])
+    np.save('zeta%dtest_%s'%(i,postfix),zeta3[i])
 print("results saved to %d numpy array files"%numell)
 
 print("--------------------")
 print("--------------------")
 print("--------------------")
 
-#print to match Eisenstein C++ code output format
-for bin1 in np.arange(0,nbins):
-    for bin2 in np.arange(0,nbins//2+1)[::-1]:
-        if bin2<=bin1:
-            print("#B1 B2 l=0 l=1            l=2          l=3                    l=4")
-            print(bin1, bin2, np.real(zetas[0][bin1,bin2]),np.real(zetas[1][bin1,bin2]),np.real(zetas[2][bin1,bin2]),np.real(zetas[3][bin1,bin2]),np.real(zetas[4][bin1,bin2]),np.real(zetas[5][bin1,bin2]),np.real(zetas[6][bin1,bin2]),np.real(zetas[7][bin1,bin2]),np.real(zetas[8][bin1,bin2]),np.real(zetas[9][bin1,bin2]))
-            #print bin1, bin2, np.real(zeta0[bin1,bin2])*2,np.real(zeta1[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta2[bin1,bin2])/ np.real(zeta0[bin1,bin2]),np.real(zeta3[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta4[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta5[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta6[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta7[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta8[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta9[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta10[bin1,bin2])/np.real(zeta0[bin1,bin2])
+if print_output:
+    #print to match Eisenstein C++ code output format
+    for bin1 in np.arange(0,nbins):
+        for bin2 in np.arange(0,nbins//2+1)[::-1]:
+            if bin2<=bin1:
+                print("#B1 B2 l=0 l=1            l=2          l=3                    l=4")
+                print(bin1, bin2, np.real(zeta3[0][bin1,bin2]),np.real(zeta3[1][bin1,bin2]),np.real(zeta3[2][bin1,bin2]),np.real(zeta3[3][bin1,bin2]),np.real(zeta3[4][bin1,bin2]),np.real(zeta3[5][bin1,bin2]),np.real(zeta3[6][bin1,bin2]),np.real(zeta3[7][bin1,bin2]),np.real(zeta3[8][bin1,bin2]),np.real(zeta3[9][bin1,bin2]))
+                #print bin1, bin2, np.real(zeta0[bin1,bin2])*2,np.real(zeta1[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta2[bin1,bin2])/ np.real(zeta0[bin1,bin2]),np.real(zeta3[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta4[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta5[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta6[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta7[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta8[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta9[bin1,bin2])/np.real(zeta0[bin1,bin2]),np.real(zeta10[bin1,bin2])/np.real(zeta0[bin1,bin2])
 
 end_time=time.time()
 timecost=end_time-start_time
@@ -524,6 +591,6 @@ if docheck:
 #print "zeta3ct check", sum(abs(zeta3ct-np.transpose(zeta3ct)))
 
     for i in range(numell):
-        print("zeta%d comparison check"%i, zetas[i]-zetacts[i])
+        print("zeta%d comparison check"%i, zeta3[i]-zetacts[i])
 
 #can I use same structure idea to add spherical harmonics one at a time to relevant bin? i.e. avoid using histogram---but on the other hand, using histogram, if it works how stephen says, would not be a problem.
