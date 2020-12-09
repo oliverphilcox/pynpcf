@@ -10,6 +10,8 @@ import os, sys
 import time
 #kd tree
 from scipy import spatial
+#custom cython functions used here
+import cython_utils
 
 ################## Histogram code from numpy ##########
 
@@ -61,6 +63,7 @@ boxsize = 2500. #size of box used in sample data file.
 rescale = 1. #if you want to rescale the box (unity if not).
 no_weights = True # replace weights with unity
 include_norm3 = True # if True, include factor of (-1)^ell / sqrt[2ell+1] for 3PCF for consistency with NPCF
+use_cython = True # if True, bin using compiled Cython functions, if False, use Pythonic versions
 
 # Binning
 rmax=np.sqrt(3.)*100. # *5
@@ -105,8 +108,8 @@ binarr=np.mgrid[0:nbins+1]*deltr
 n_mult = numell*(numell+1)//2
 
 # Output array for 3PCF
-zeta3 = np.zeros((numell,nbins,nbins))+0j
-zeta4 = np.zeros((numell,numell,numell,nbins,nbins,nbins))+0j
+zeta3 = np.zeros((numell,nbins,nbins),dtype=np.float64)
+zeta4 = np.zeros((numell,numell,numell,nbins,nbins,nbins),dtype=np.float64)
 
 histtime=0
 bintime=0
@@ -130,10 +133,10 @@ start_time = time.time()
 
 if os.path.exists('weights_3pcf_n%d.npy'%numell):
     print("Loading 3PCF weights from file")
-    weights_3pcf = np.load('weights_3pcf_n%d.npy'%numell)
+    weights_3pcf = np.asarray(np.load('weights_3pcf_n%d.npy'%numell),dtype=np.float64)
 else:
     # compute weighting matrix for 3pcf (inefficiently coded, but not rate limiting)
-    weights_3pcf = np.zeros(((numell+1)**2,(numell+1)**2))
+    weights_3pcf = np.zeros(((numell+1)**2,(numell+1)**2),dtype=np.float64)
 
     if verb: print("note matrix could be a lot less sparse!")
     for ell_1 in range(numell):
@@ -149,10 +152,10 @@ else:
 
 if os.path.exists('weights_4pcf_n%d.npy'%numell):
     print("Loading 4PCF weights from file")
-    weights_4pcf = np.load('weights_4pcf_n%d.npy'%numell)
+    weights_4pcf = np.asarray(np.load('weights_4pcf_n%d.npy'%numell),dtype=np.float64)
 else:
     # compute weighting matrix for 4pcf (inefficiently coded, but not rate limiting)
-    weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)**2))
+    weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)**2),dtype=np.float64)
 
     print("3j function computation takes ages...")
     for ell_1 in range(numell):
@@ -203,6 +206,9 @@ count=0
 querytime=0.
 complextime=0.
 realtime=0.
+
+if use_cython:
+    cython_utils.initialize(numell,nbins)
 
 first_it = 1 # if this is the first iteration
 for i in range(0,totalits): #do nperit galaxies at a time for totalits total iterations
@@ -357,6 +363,7 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
                                  (1./256.)*np.sqrt(1155./(2.*np.pi))*(xmiydivr*(4199.*zdivrni-7956.*zdivrse+4914.*zdivrfi-1092.*zdivrcu+63.*zdivr)),
                                  (1./512.)*np.sqrt(21./np.pi)*(46189.*zdivrtn-109395.*zdivret+90090.*zdivrsi-30030.*zdivrft+3465.*zdivrsq-63.),
                                  ])
+        all_weights = np.asarray(all_weights,dtype=np.complex128)
 
         # histogram all these weights at once
         # this computes the Y_lm coefficients in a single list
@@ -376,108 +383,92 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
             bin_val = np.ravel(np.outer(np.arange(nbins)+0.5,np.arange(nbins)+0.5))
             first_it = 0
 
-        ## 3PCF Summation
-        t3pt = time.time()
+        # Now perform summations into bins
+        # Note that the code is in cython and defined in cython_utils.pyx
+        # this gives a ~ 5x speed-boost for the 4PCF
 
-        # sum up all ell (simply with weights)
-        for l1 in range(numell):
-            l2 = l1
-            for m1 in range(-l1,l1+1):
-                m2 = -m1
-                if m1<0:
-                    a_l1m1 = y_all[l1*(l1+1)//2+l1+m1]
-                    a_l2m2 = a_l1m1.conjugate()*(-1.)**m1
-                else:
-                    a_l2m2 = y_all[l2*(l2+1)//2+l2+m2]
-                    a_l1m1 = a_l2m2.conjugate()*(-1.)**m2
-                ## TODO: also add symmetry to this from (m1 -> -m1) giving a complex conjugate term
-                zeta3[l1] += np.outer(a_l1m1,a_l2m2)*weights_3pcf[l1**2+m1+l1,l2**2+m2+l2]
-        t3pt = time.time()-t3pt
+        if use_cython:
+            t3pt = time.time()
+            cython_utils.threepcf_sum(y_all, zeta3, weights_3pcf)
+            t3pt = time.time()-t3pt
 
-        ## 4PCF Summation
-        t4pt = time.time()
+            t4pt = time.time()
+            cython_utils.fourpcf_sum(y_all, zeta4, weights_4pcf)
+            t4pt = time.time()-t4pt
 
-        # sum up all ell (with weights)
-        for l1 in range(numell):
-            # create local copies of weights and alm
-            yl1_cut = y_all[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
-            weights_cut1 = weights_4pcf[l1**2:(l1+1)**2]
+            print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))
 
-            for l2 in range(numell):
-                yl2_cut = y_all[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
-                weights_cut2 = weights_cut1[:,l2**2:(l2+1)**2]
+        ### Alternatively use python:
+        else:
 
-                for l3 in range(np.abs(l1-l2),min(l1+l2+1,numell)):
-                    # check triangle conditions are satisfied
-                    if l3<np.abs(l1-l2): continue
-                    if l3>l1+l2: continue
-                    yl3_cut = y_all[l3*(l3+1)//2:(l3+1)*(l3+2)//2]
-                    weights_cut3 = weights_cut2[:,:,l3**2:(l3+1)**2]
+            # Now perform summations (either python or cython)
+            def threepcf_sum(y_all, zeta3):
+                """Sum up multipole array into 3PCFs"""
+                # sum up all ell (simply with weights)
+                for l1 in range(numell):
+                    for m1 in range(-l1,1):
+                        a_l1m1 = y_all[l1*(l1+1)//2+l1+m1]
+                        a_l2m2 = a_l1m1.conjugate()*(-1.)**m1
+                        zeta3[l1] += np.real(np.outer(a_l1m1,a_l2m2)*weights_3pcf[l1**2+m1+l1,l1**2-m1+l1])*((m1!=0)+1) # can take real part since answer will be real!
 
-                    for m1 in range(-l1,l1+1):
-                        # load a_l1m1
-                        if m1<0:
-                            a_l1m1 = yl1_cut[l1+m1]
-                        else:
-                            a_l1m1 = yl1_cut[l1-m1].conjugate()*(-1.)**m1
+            ## 3PCF Summation (using Python)
+            t3pt = time.time()
+            threepcf_sum(y_all, zeta3)
+            t3pt = time.time()-t3pt
 
-                        for m2 in range(-l2,l2+1):
-                            # load a_l2m2
-                            if m2<0:
-                                a_l2m2 = yl2_cut[l2+m2]
-                            else:
-                                a_l2m2 = yl2_cut[l2-m2].conjugate()*(-1.)**m2
+            ## 4PCF Summation
+            def fourpcf_sum(y_all, zeta4):
+                """Sum up multipole array into 4PCFs"""
+                # sum up all ell (simply with weights)
+                for l1 in range(numell):
+
+                    for l2 in range(numell):
+
+                        for l3 in range(np.abs(l1-l2),min(l1+l2+1,numell)):
+
+                            for m1 in range(-l1,l1+1):
+                                # load a_l1m1
+                                if m1<0:
+                                    a_l1m1 = y_all[l1*(l1+1)//2+l1+m1]
+                                else:
+                                    a_l1m1 = y_all[l1*(l1+1)//2+l1-m1].conjugate()*(-1.)**m1
+
+                                for m2 in range(-l2,l2+1):
+                                    # load a_l2m2
+                                    if m2<0:
+                                        a_l2m2 = y_all[l2*(l2+1)//2+l2+m2]
+                                    else:
+                                        a_l2m2 = y_all[l2*(l2+1)//2+l2-m2].conjugate()*(-1.)**m2
+
+                                    # set m3 from m1 + m2 + m3 = 0
+                                    m3 = -m1-m2
+                                    if np.abs(m3)>l3: continue
+
+                                    this_weight = weights_4pcf[l1**2+m1+l1,l2**2+m2+l2,l3**2+m3+l3]
+                                    if this_weight==0: continue
+
+                                    # load a_l3m3
+                                    if m3<0:
+                                        a_l3m3 = y_all[l3*(l3+1)//2+l3+m3]
+                                    else:
+                                        a_l3m3 = y_all[l3*(l3+1)//2+l3-m3].conjugate()*(-1.)**m3
+
+                                    # NB: the contribution from (-m1, -m2) is just the conjugate of that from (m1, m2)
+                                    # this can probably reduce the number of summations by ~ 2x
+                                    # todo: implement this
+                                    zeta4[l1,l2,l3] += np.real(np.einsum('i,j,k->ijk',a_l1m1,a_l2m2,a_l3m3))*this_weight
 
 
-                            # set m3 from m1 + m2 + m3 = 0
-                            m3 = -m1-m2
-                            if np.abs(m3)>l3: continue
+            ## 3PCF Summation (using cython)
+            t3pt1 = time.time()
+            threepcf_sum(y_all, zeta3)
+            t3pt1 = time.time()-t3pt1
 
-                            this_weight = weights_cut3[m1+l1,m2+l2,m3+l3]
-                            if this_weight==0: continue
+            t4pt = time.time()
+            fourpcf_sum(y_all, zeta4)
+            t4pt = time.time()-t4pt
 
-                            # load a_l3m3
-                            if m3<0:
-                                a_l3m3 = yl3_cut[l3+m3]
-                            else:
-                                a_l3m3 = yl3_cut[l3-m3].conjugate()*(-1.)**m3
-
-                            # NB: the contribution from (-m1, -m2) is just the conjugate of that from (m1, m2)
-                            # this can probably reduce the number of summations by ~ 2x
-                            # todo: implement this
-                            zeta4[l1,l2,l3] += np.einsum('i,j,k->ijk',a_l1m1,a_l2m2,a_l3m3)*weights_cut3[m1+l1,m2+l2,m3+l3]
-        t4pt = time.time()-t4pt
-
-        print("3pcf binning time: %.2e \t 4pcf binning time: %.2e"%(t3pt,t4pt))
-
-        # Sum up all ell (using outer products to do all bins at once)
-
-        # if verb: print("NB: second method is much faster but harder to generalize!!")
-        #
-        # print("")
-        # ## MOST EFFICIENT VERSION
-        # zeta3_tmp = np.zeros_like(zeta3)
-        # t2 = time.time()
-        # i_start = 0
-        # for l_i in range(numell):
-        #     #if l_i==4:
-        #     #    for j in range(l_i):
-        #     #        print('%d'%(j-l_i),np.outer(y_all[i_start+j],y_all[i_start+j].conjugate())[3,5])
-        #     tmp_sum = np.sum([np.outer(y_all[i_start+j],y_all[i_start+j].conjugate()) for j in range(l_i)],axis=0)+0.5*np.outer(y_all[i_start+l_i],y_all[i_start+l_i].conjugate())
-        #     zeta3_tmp[l_i] += tmp_sum + tmp_sum.conjugate()
-        #     i_start += l_i+1
-        # t2 = time.time()-t2
-        #
-        # print("simple: %.2e, efficient %.2e"%(t3pt,t2))
-        # exit()
-        #
-        ### LEAST EFFICIENT VERSION
-        # # Sum up all relevant ell as a matrix product - this is REALLY slow
-        # #t3 = time.time()
-        # tmp_sum = np.einsum('ia,jb,kij->kab',y_all,y_all.conj(),weights_3pcf)
-        # zeta3 += tmp_sum + tmp_sum.conjugate()
-        # #t4 = time.time()-t3
-        # #print("times: %.2e vs %.2e"%(t2,t4))
+            print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))
 
         end_time_binning=time.time()
         bintime=end_time_binning-start_time_binning+bintime
