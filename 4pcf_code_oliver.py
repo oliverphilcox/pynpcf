@@ -108,8 +108,10 @@ binarr=np.mgrid[0:nbins+1]*deltr
 n_mult = numell*(numell+1)//2
 
 # Output array for 3PCF
-zeta3 = np.zeros((numell,nbins,nbins),dtype=np.float64)
-zeta4 = np.zeros((numell,numell,numell,nbins,nbins,nbins),dtype=np.float64)
+n3pcf = nbins*(1+nbins)*(1+2*nbins)//6 # number of 3PCF radial bins with r1<=r2
+n4pcf = nbins*(1+nbins)*(2+nbins)*(1+3*nbins)//24 # number of 4PCF radial bins with r1<=r2<=r3
+zeta3 = np.zeros((numell,n3pcf),dtype=np.float64)
+zeta4 = np.zeros((numell,numell,numell,n4pcf),dtype=np.float64)
 
 histtime=0
 bintime=0
@@ -136,18 +138,23 @@ if os.path.exists('weights_3pcf_n%d.npy'%numell):
     weights_3pcf = np.asarray(np.load('weights_3pcf_n%d.npy'%numell),dtype=np.float64)
 else:
     # compute weighting matrix for 3pcf (inefficiently coded, but not rate limiting)
-    weights_3pcf = np.zeros(((numell+1)**2,(numell+1)**2),dtype=np.float64)
+    weights_3pcf = np.zeros(((numell+1)**2),dtype=np.float64)
 
     if verb: print("note matrix could be a lot less sparse!")
     for ell_1 in range(numell):
         for m_1 in range(-ell_1,ell_1+1):
-            for ell_2 in range(numell):
-                for m_2 in range(-ell_2,ell_2+1):
-                    # enforce (ell_i = ell_j) and m_i = m_j,
-                    if not include_norm3:
-                        weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(-m_1)
-                    else:
-                        weights_3pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2] = (ell_1==ell_2)*(m_1+m_2==0)*(-1.)**(ell_1-m_1)/np.sqrt(2.*ell_1+1.)
+            ell_2 = ell_1
+            m_2 = -m_1
+            # enforce (ell_i = ell_j) and m_i = m_j,
+            # add factor of 2x if m1 != 0 by symmmetry
+            if m_1==0:
+                sym_fac = 1
+            else:
+                sym_fac = 2
+            if not include_norm3:
+                weights_3pcf[ell_1**2+m_1+ell_1] = (-1.)**(-m_1)*sym_fac
+            else:
+                weights_3pcf[ell_1**2+m_1+ell_1] = (-1.)**(ell_1-m_1)/np.sqrt(2.*ell_1+1.)*sym_fac
     np.save('weights_3pcf_n%d'%numell,weights_3pcf)
 
 if os.path.exists('weights_4pcf_n%d.npy'%numell):
@@ -155,7 +162,8 @@ if os.path.exists('weights_4pcf_n%d.npy'%numell):
     weights_4pcf = np.asarray(np.load('weights_4pcf_n%d.npy'%numell),dtype=np.float64)
 else:
     # compute weighting matrix for 4pcf (inefficiently coded, but not rate limiting)
-    weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)**2),dtype=np.float64)
+    # note final index only specifies ell3 since m3 is known
+    weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)),dtype=np.float64)
 
     print("3j function computation takes ages...")
     for ell_1 in range(numell):
@@ -164,7 +172,19 @@ else:
                 for m_2 in range(-ell_2,ell_2+1):
                     for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
                         m_3 = -m_1-m_2 # from triangle condition
-                        weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3**2+m_3+ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)
+                        tmp_fac = 1.
+                        if m_1==0 and m_2==0 and m_3==0:
+                            tmp_fac *= 1.
+                        else:
+                            tmp_fac *= 2.
+                        # add factors appearing in complex conjugates
+                        if m_1>0:
+                            tmp_fac *= (-1.)**m_1
+                        if m_2>0:
+                            tmp_fac *= (-1.)**m_2
+                        if m_3>0:
+                            continue # not used in code
+                        weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)*tmp_fac
     np.save('weights_4pcf_n%d'%numell,weights_4pcf)
 
 end_time = time.time()
@@ -395,7 +415,6 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
             t4pt = time.time()
             cython_utils.fourpcf_sum(y_all, zeta4, weights_4pcf)
             t4pt = time.time()-t4pt
-
             print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))
 
         ### Alternatively use python:
@@ -409,7 +428,8 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
                     for m1 in range(-l1,1):
                         a_l1m1 = y_all[l1*(l1+1)//2+l1+m1]
                         a_l2m2 = a_l1m1.conjugate()*(-1.)**m1
-                        zeta3[l1] += np.real(np.outer(a_l1m1,a_l2m2)*weights_3pcf[l1**2+m1+l1,l1**2-m1+l1])*((m1!=0)+1) # can take real part since answer will be real!
+                        print("this is outdated with radial bins etc.")
+                        zeta3[l1] += np.real(np.outer(a_l1m1,a_l2m2)*weights_3pcf[l1**2+m1+l1])*((m1!=0)+1) # can take real part since answer will be real!
 
             ## 3PCF Summation (using Python)
             t3pt = time.time()
@@ -444,7 +464,7 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
                                     m3 = -m1-m2
                                     if np.abs(m3)>l3: continue
 
-                                    this_weight = weights_4pcf[l1**2+m1+l1,l2**2+m2+l2,l3**2+m3+l3]
+                                    this_weight = weights_4pcf[l1**2+m1+l1,l2**2+m2+l2,l3]
                                     if this_weight==0: continue
 
                                     # load a_l3m3
@@ -456,6 +476,7 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
                                     # NB: the contribution from (-m1, -m2) is just the conjugate of that from (m1, m2)
                                     # this can probably reduce the number of summations by ~ 2x
                                     # todo: implement this
+                                    print("this is outdated with radial bins etc.")
                                     zeta4[l1,l2,l3] += np.real(np.einsum('i,j,k->ijk',a_l1m1,a_l2m2,a_l3m3))*this_weight
 
 
@@ -472,6 +493,9 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
 
         end_time_binning=time.time()
         bintime=end_time_binning-start_time_binning+bintime
+
+print("NB: ordering has all radial bins in (a,b,c) ordering as a 1D array")
+exit()
 
 #2.*np.pi this latter factor was to agree with Eisenstein C++ code, which we now know also does not have right normalization factor, but that cancels out in edge correction.
 
