@@ -58,18 +58,21 @@ def histogram_multi(a, bins=10, weight_matrix=None):
 ### PARAMETERS
 #infile = 'sample_feb27_unity_weights_rescale400_first500.dat'
 infile = 'patchy_gal_pos.txt'
-cut_number = 1000 # maximum number of galaxies to read in
+cut_number = 10000 # maximum number of galaxies to read in
 boxsize = 2500. #size of box used in sample data file.
-rescale = 1. #if you want to rescale the box (unity if not).
+rescale = .3 #if you want to rescale the box (unity if not).
 no_weights = True # replace weights with unity
 include_norm3 = True # if True, include factor of (-1)^ell / sqrt[2ell+1] for 3PCF for consistency with NPCF
 use_cython = True # if True, bin using compiled Cython functions, if False, use Pythonic versions
+compute_4PCF = True # else just compute 3PCF
 
 # Binning
 rmax=np.sqrt(3.)*100. # *5
 rmin=1e-5
 nbins=10 # 3
 numell = 11
+
+assert numell<=11, "weights only computed up to ell=10!"
 
 ### LOAD IN DATA
 if not os.path.exists(infile):
@@ -85,10 +88,9 @@ width_y = np.max(galy)-np.min(galy)
 width_z = np.max(galz)-np.min(galz)
 print("read %d galaxies from file with average weight %.2f"%(len(galx),np.mean(galw)))
 print("galaxy widths: [%.2e, %.2e, %.2e] vs boxsize %.2e"%(width_x,width_y,width_z,boxsize))
+print("Number density: %.2e"%(len(galx)/(width_x*width_y*width_z)))
 assert(max([width_x,width_y,width_z])<boxsize)
 print("number in file=",len(galx))
-
-#exit()
 
 ### Verbosity / output options
 verb=0 # if True, print useful(?) messages throughout
@@ -109,9 +111,10 @@ n_mult = numell*(numell+1)//2
 
 # Output array for 3PCF
 n3pcf = nbins*(1+nbins)*(1+2*nbins)//6 # number of 3PCF radial bins with r1<=r2
-n4pcf = nbins*(1+nbins)*(2+nbins)*(1+3*nbins)//24 # number of 4PCF radial bins with r1<=r2<=r3
 zeta3 = np.zeros((numell,n3pcf),dtype=np.float64)
-zeta4 = np.zeros((numell,numell,numell,n4pcf),dtype=np.float64)
+# if compute_4PCF:
+#     n4pcf = nbins*(1+nbins)*(2+nbins)*(1+3*nbins)//24 # number of 4PCF radial bins with r1<=r2<=r3
+#     zeta4 = np.zeros((numell,numell,numell,n4pcf),dtype=np.float64)
 
 histtime=0
 bintime=0
@@ -146,12 +149,13 @@ else:
             # nb: don't use m_1>0 here
             ell_2 = ell_1
             m_2 = -m_1
+            tmp_fac = (2.*ell_1+1.)/np.pi # factor missed in spherical harmonic definition
             # enforce (ell_i = ell_j) and m_i = m_j,
             # add factor of 2x if m1 != 0 by symmmetry
             if m_1==0:
-                tmp_fac = 1.
+                tmp_fac *= 1.
             else:
-                tmp_fac = 2.
+                tmp_fac *= 2.
 
             # compute weights (note we absorb extra factor of (-1)^m from complex conjugate)
             if not include_norm3:
@@ -160,35 +164,36 @@ else:
                 weights_3pcf[ell_1**2+m_1+ell_1] = (-1.)**(ell_1)/np.sqrt(2.*ell_1+1.)*tmp_fac
     np.save('weights_3pcf_n%d'%numell,weights_3pcf)
 
-if os.path.exists('weights_4pcf_n%d.npy'%numell):
-    print("Loading 4PCF weights from file")
-    weights_4pcf = np.asarray(np.load('weights_4pcf_n%d.npy'%numell),dtype=np.float64)
-else:
-    # compute weighting matrix for 4pcf (inefficiently coded, but not rate limiting)
-    # note final index only specifies ell3 since m3 is known
-    weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)),dtype=np.float64)
+if compute_4PCF:
+    if os.path.exists('weights_4pcf_n%d.npy'%numell):
+        print("Loading 4PCF weights from file")
+        weights_4pcf = np.asarray(np.load('weights_4pcf_n%d.npy'%numell),dtype=np.float64)
+    else:
+        # compute weighting matrix for 4pcf (inefficiently coded, but not rate limiting)
+        # note final index only specifies ell3 since m3 is known
+        weights_4pcf = np.zeros(((numell+1)**2,(numell+1)**2,(numell+1)),dtype=np.float64)
 
-    print("3j function computation takes ages...")
-    for ell_1 in range(numell):
-        for m_1 in range(-ell_1,ell_1+1):
-            for ell_2 in range(numell):
-                for m_2 in range(-ell_2,ell_2+1):
-                    for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
-                        m_3 = -m_1-m_2 # from triangle condition
-                        tmp_fac = 1.
-                        if m_1==0 and m_2==0 and m_3==0:
-                            tmp_fac *= 1.
-                        else:
-                            tmp_fac *= 2.
-                        # add factors appearing in complex conjugates
-                        if m_1>0:
-                            tmp_fac *= (-1.)**m_1
-                        if m_2>0:
-                            tmp_fac *= (-1.)**m_2
-                        if m_3>0:
-                            continue # not used in code
-                        weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)*tmp_fac
-    np.save('weights_4pcf_n%d'%numell,weights_4pcf)
+        print("3j function computation takes ages...")
+        for ell_1 in range(numell):
+            for m_1 in range(-ell_1,ell_1+1):
+                for ell_2 in range(numell):
+                    for m_2 in range(-ell_2,ell_2+1):
+                        for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
+                            m_3 = -m_1-m_2 # from triangle condition
+                            tmp_fac = np.sqrt((2.*ell_1+1.)*(2.*ell_2+1.)*(2.*ell_3+1.))/np.sqrt(np.pi**3.) # factor missed in spherical harmonic definition
+                            if m_1==0 and m_2==0 and m_3==0:
+                                tmp_fac *= 1.
+                            else:
+                                tmp_fac *= 2.
+                            # add factors appearing in complex conjugates
+                            if m_1>0:
+                                tmp_fac *= (-1.)**m_1
+                            if m_2>0:
+                                tmp_fac *= (-1.)**m_2
+                            if m_3>0:
+                                continue # not used in code
+                            weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)*tmp_fac
+        np.save('weights_4pcf_n%d'%numell,weights_4pcf)
 
 end_time = time.time()
 print("\ntime to define 3PCF + 4PCF weighting matrices=",end_time-start_time)
@@ -219,11 +224,11 @@ start_time=time.time()
 #put galaxies in a tree
 tree=spatial.cKDTree(galcoords,leafsize=3000)
 end_time=time.time()
-print("\ntime to put",ngal,"random galaxies in tree=(*)",end_time-start_time)
+print("\ntime to put",ngal,"galaxies in tree=(*)",end_time-start_time)
 
 #Choose to work on first nperit galaxies.
 start_time=time.time()
-nperit=ngal//1 #1 for just looking at one galaxy to see more granular timings. ngal/100 gives 20000/10=2000 per iteration.
+nperit=ngal//10 #1 for just looking at one galaxy to see more granular timings. ngal/100 gives 20000/10=2000 per iteration.
 totalits=ngal//nperit #5#ngal/nperit#5 for testing leaf size if I want to iterate over 1000 galaxies.
 count=0
 querytime=0.
@@ -232,6 +237,148 @@ realtime=0.
 
 if use_cython:
     cython_utils.initialize(numell,nbins)
+
+    ThreePCF = cython_utils.ThreePCF(numell, nbins, weights_3pcf)
+    if compute_4PCF:
+        FourPCF = cython_utils.FourPCF(numell, nbins, weights_4pcf)
+
+def compute_weight_matrix(galxtr,galytr,galztr,galwtr):
+    """Compute the matrix of spherical harmonics from input x,y,z,w matrices.
+    NB: since this is just array multiplication, switching to Cython won't significantly"""
+
+    #xmiydivr,xdivr,ydivr,zdivr=(galxtr-1j*galytr)/rgals,galxtr/rgals,galytr/rgals,galztr/rgals #compute (x-iy)/r for galaxies in ball around central
+                                                                                                                                         #zdivr=galztr/rgals
+                                                                                                                                         #xdivr=galxtr/rgals
+                                                                                                                                         #ydivr=galytr/rgals
+    xmiydivr,xdivr,ydivr,zdivr=(galxtr-1j*galytr),galxtr,galytr,galztr#broke this to see how not dividing by r affects results. #compute (x-iy)/r for galaxies in ball around central
+
+    #compute spherical harmonics on all bins for this galaxy; query_ball finds central itself too but this doesn't contribute to spherical harmonics because x, y, z are zero.
+
+    if run_tests:
+        y00=.5*(1./np.pi)**.5*histogram(rgals,bins=binarr,weights=galwtr)
+        complex_test_start=time.time()
+        y1m1=.5*(3./(2.*np.pi))**.5*histogram(rgals,bins=binarr,weights=galwtr*xmiydivr) #this just gives histogram y values; [1] would give bin edges with length of [0] + 1.
+        complex_test_end=time.time()
+        complextime=complex_test_end-complex_test_start+complextime
+        real_test_start=time.time()
+        y1m1test=.5*(3./(2.*np.pi))**.5*(histogram(rgals,bins=binarr,weights=galwtr*xdivr)-1j*histogram(rgals,bins=binarr,weights=galwtr*ydivr))
+        real_test_end=time.time()
+        realtime=real_test_end-real_test_start+realtime
+
+    # Accumulate weights (up to the number we actually use)
+    all_weights = np.zeros((n_mult,len(galwtr)),np.complex128) # assign memory
+
+    all_weights[0] = .5*np.ones_like(rgals)
+    if numell>1:
+        # ell = 1
+        all_weights[1] = .5*(1./2.)**.5*xmiydivr
+        all_weights[2] = .5*zdivr
+        if numell>2:
+            # ell = 2
+            xdivrsq=xdivr*xdivr # (x/r)^2
+            ydivrsq=ydivr*ydivr # (y/r)^2
+            zdivrsq=zdivr*zdivr # (z/r)^2
+            xmiydivrsq=xmiydivr*xmiydivr # ((x-iy)/r)^2
+            all_weights[3] = .25*(3./2.)**.5*xmiydivrsq
+            all_weights[4] = .5*(3./2.)**.5*xmiydivr*zdivr
+            all_weights[5] = .25*(2.*zdivrsq-xdivrsq-ydivrsq)
+            if numell>3:
+                # ell = 3
+                zdivrcu=zdivrsq*zdivr # (z/r)^3
+                xmiydivrcu=xmiydivrsq*xmiydivr # ((x-iy)/r)^3
+                all_weights[6] = .125*(5.)**.5*xmiydivrcu
+                all_weights[7] = .25*(15./2.)**.5*xmiydivrsq*zdivr
+                all_weights[8] = .125*(3.)**.5*xmiydivr*(4.*zdivrsq-xdivrsq-ydivrsq)
+                all_weights[9] = .25*zdivr*(2.*zdivrsq-3.*xdivrsq-3.*ydivrsq)
+                if numell>4:
+                    # ell = 4
+                    zdivrft=zdivrsq*zdivrsq # (z/r)^4
+                    xmiydivrft=xmiydivrcu*xmiydivr # ((x-iy)/r)^5
+                    all_weights[10] = .1875*np.sqrt(35./18.)*xmiydivrft
+                    all_weights[11] = .375*np.sqrt(35./9.)*xmiydivrcu*zdivr
+                    all_weights[12] = .375*np.sqrt(5./18.)*xmiydivrsq*(7.*zdivrsq-1)
+                    all_weights[13] = .375*np.sqrt(5./9.)*xmiydivr*zdivr*(7.*zdivrsq-3.)
+                    all_weights[14] = .1875*np.sqrt(1./9.)*(35.*zdivrft-30.*zdivrsq+3.)
+                    if numell>5:
+                        # ell = 5
+                        zdivrfi=zdivrft*zdivr # (z/r)^5
+                        xmiydivrfi=xmiydivrft*xmiydivr # ((x-iy)/r)^5
+                        all_weights[15] = (3./32.)*np.sqrt(7.)*xmiydivrfi
+                        all_weights[16] = (3./16.)*np.sqrt(35./2.)*xmiydivrft*zdivr
+                        all_weights[17] = (1./32.)*np.sqrt(35.)*xmiydivrcu*(9.*zdivrsq-1.)
+                        all_weights[18] = (1./8.)*np.sqrt(105./2.)*xmiydivrsq*(3.*zdivrcu-zdivr)
+                        all_weights[19] = (1./16.)*np.sqrt(15./2.)*xmiydivr*(21.*zdivrft-14.*zdivrsq+1.)
+                        all_weights[20] = (1./16.)*(63.*zdivrfi-70.*zdivrcu+15.*zdivr)
+                        if numell>6:
+                            # ell = 6
+                            zdivrsi=zdivrfi*zdivr # (z/r)^6
+                            xmiydivrsi=xmiydivrfi*xmiydivr # ((x-iy)/r)^6
+                            all_weights[21] = (1./64.)*np.sqrt(231.)*xmiydivrsi
+                            all_weights[22] = (3./32.)*np.sqrt(77.)*xmiydivrfi*zdivr
+                            all_weights[23] = (3./32.)*np.sqrt(7./2.)*xmiydivrft*(11.*zdivrsq-1.)
+                            all_weights[24] = (1./32.)*np.sqrt(105.)*xmiydivrcu*(11.*zdivrcu-3.*zdivr)
+                            all_weights[25] = (1./64.)*np.sqrt(105.)*xmiydivrsq*(33.*zdivrft-18.*zdivrsq+1.)
+                            all_weights[26] = (1./16.)*np.sqrt(21./2.)*xmiydivr*(33.*zdivrfi-30.*zdivrcu+5.*zdivr)
+                            all_weights[27] = (1./32.)*(231.*zdivrsi-315.*zdivrft+105.*zdivrsq-5.)
+                            # ell = 7
+                            if numell>7:
+                                zdivrse=zdivrsi*zdivr # (z/r)^7
+                                xmiydivrse=xmiydivrsi*xmiydivr # ((x-iy)/r)^7
+                                all_weights[28] = (3./64.)*np.sqrt(143./6.)*xmiydivrse
+                                all_weights[29] = (3./64.)*np.sqrt(1001./3.)*xmiydivrsi*zdivr
+                                all_weights[30] = (3./64.)*np.sqrt(77./6.)*xmiydivrfi*(13.*zdivrsq-1.)
+                                all_weights[31] = (3./32.)*np.sqrt(77./6.)*xmiydivrft*(13.*zdivrcu-3.*zdivr)
+                                all_weights[32] = (3./64.)*np.sqrt(7./6.)*xmiydivrcu*(143.*zdivrft-66.*zdivrsq+3.)
+                                all_weights[33] = (3./64.)*np.sqrt(7./3.)*xmiydivrsq*(143.*zdivrfi-110.*zdivrcu+15.*zdivr)
+                                all_weights[34] = (1./64.)*np.sqrt(7./2.)*xmiydivr*(429.*zdivrsi-495.*zdivrft+135.*zdivrsq-5.)
+                                all_weights[35] = (1./32.)*(429.*zdivrse-693.*zdivrfi+315.*zdivrcu-35.*zdivr)
+                                if numell>8:
+                                    # ell = 8
+                                    xmiydivret=xmiydivrse*xmiydivr # ((x-iy)/r)^7
+                                    zdivret=zdivrse*zdivr # (z/r)^8
+                                    all_weights[36] = (3./256.)*np.sqrt(715./2.)*xmiydivret
+                                    all_weights[37] = (3./64.)*np.sqrt(715./2.)*xmiydivrse*zdivr
+                                    all_weights[38] = (1./128.)*np.sqrt(429.)*xmiydivrsi*(15.*zdivrsq-1.)
+                                    all_weights[39] = (3./64.)*np.sqrt(1001./2.)*xmiydivrfi*(5.*zdivrcu-zdivr)
+                                    all_weights[40] = (3./128.)*np.sqrt(77./2.)*xmiydivrft*(65.*zdivrft-26.*zdivrsq+1.)
+                                    all_weights[41] = (1./64.)*np.sqrt(1155./2.)*xmiydivrcu*(39.*zdivrfi-26.*zdivrcu+3.*zdivr)
+                                    all_weights[42] = (3./128.)*np.sqrt(35.)*xmiydivrsq*(143.*zdivrsi-143.*zdivrft+33.*zdivrsq-1.)
+                                    all_weights[43] = (3./64.)*np.sqrt(1./2.)*xmiydivr*(715.*zdivrse-1001.*zdivrfi+385.*zdivrcu-35.*zdivr)
+                                    all_weights[44] = (1./256.)*(6435.*zdivret-12012.*zdivrsi+6930.*zdivrft-1260.*zdivrsq+35.)
+                                    if numell>9:
+                                        # ell = 9
+                                        xmiydivrni=xmiydivret*xmiydivr # ((x-iy)/r)^9
+                                        zdivrni=zdivret*zdivr # (z/r)^9
+                                        all_weights[45] = (1./512.)*np.sqrt(12155.)*xmiydivrni
+                                        all_weights[46] = (3./256.)*np.sqrt(12155./2.)*xmiydivret*zdivr
+                                        all_weights[47] = (3./512.)*np.sqrt(715.)*xmiydivrse*(17.*zdivrsq-1.)
+                                        all_weights[48] = (1./128.)*np.sqrt(2145.)*xmiydivrsi*(17.*zdivrcu-3.*zdivr)
+                                        all_weights[49] = (3./256.)*np.sqrt(143.)*xmiydivrfi*(85.*zdivrft-30.*zdivrsq+1.)
+                                        all_weights[50] = (3./128.)*np.sqrt(5005./2.)*xmiydivrft*(17.*zdivrfi-10.*zdivrcu+zdivr)
+                                        all_weights[51] = (1./256.)*np.sqrt(1155.)*xmiydivrcu*(221.*zdivrsi-195.*zdivrft+39.*zdivrsq-1.)
+                                        all_weights[52] = (3./128.)*np.sqrt(55.)*xmiydivrsq*(221.*zdivrse-273.*zdivrfi+91.*zdivrcu-7.*zdivr)
+                                        all_weights[53] = (3./256.)*np.sqrt(5./2.)*xmiydivr*(2431.*zdivret-4004.*zdivrsi+2002.*zdivrft-308.*zdivrsq+7.)
+                                        all_weights[54] = (1./256.)*12155.*(zdivrni-25740.*zdivrse+18018.*zdivrfi-4620.*zdivrcu+315.*zdivr)
+                                        if numell>10:
+                                            # ell = 10
+                                            xmiydivrtn=xmiydivrni*xmiydivr # ((x-iy)/r)^10
+                                            zdivrtn=zdivrni*zdivr # (z/r)^10
+                                            all_weights[55] = (1./1024.)*np.sqrt(46189.)*xmiydivrtn
+                                            all_weights[56] = (1./512.)*np.sqrt(230945.)*(xmiydivrni*zdivr)
+                                            all_weights[57] = (1./512.)*np.sqrt(12155./2.)*(xmiydivret*(19.*zdivrsq-1.))
+                                            all_weights[58] = (3./512.)*np.sqrt(12155./3.)*(xmiydivrse*(19.*zdivrcu-3.*zdivr))
+                                            all_weights[59] = (3./1024.)*np.sqrt(715./3.)*(xmiydivrsi*(323.*zdivrft-102.*zdivrsq+3.))
+                                            all_weights[60] = (3./256.)*np.sqrt(143./3.)*(xmiydivrfi*(323.*zdivrfi-170.*zdivrcu+15.*zdivr))
+                                            all_weights[61] = (3./256.)*np.sqrt(715./6.)*(xmiydivrft*(323.*zdivrsi-255.*zdivrft+45.*zdivrsq-1.))
+                                            all_weights[62] = (3./256.)*np.sqrt(715./3.)*(xmiydivrcu*(323.*zdivrse-357.*zdivrfi+105.*zdivrcu-7.*zdivr))
+                                            all_weights[63] = (3./512.)*np.sqrt(55./6.)*(xmiydivrsq*(4199.*zdivret-6188.*zdivrsi+2730.*zdivrft-364.*zdivrsq+7.))
+                                            all_weights[64] = (1./256.)*np.sqrt(55./2.)*(xmiydivr*(4199.*zdivrni-7956.*zdivrse+4914.*zdivrfi-1092.*zdivrcu+63.*zdivr))
+                                            all_weights[65] = (1./512.)*(46189.*zdivrtn-109395.*zdivret+90090.*zdivrsi-30030.*zdivrft+3465.*zdivrsq-63.)
+
+    # add in pair weights
+    all_weights *= galwtr
+    return all_weights
+
 
 first_it = 1 # if this is the first iteration
 for i in range(0,totalits): #do nperit galaxies at a time for totalits total iterations
@@ -253,146 +400,30 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         if len(ball_temp)==0:
             continue
 
-        galxtr, galytr, galztr=(galcoords[ball_temp][:,:3]-centralgals[w][:3]).T
+        galxtr, galytr, galztr=np.asarray(galcoords[ball_temp][:,:3]-centralgals[w][:3],dtype=np.complex128).T
         galwtr = galcoords[ball_temp][:,3]
+
         rgalssq=galxtr*galxtr+galytr*galytr+galztr*galztr+eps
         rgals=np.sqrt(rgalssq)
-        #xmiydivr,xdivr,ydivr,zdivr=(galxtr-1j*galytr)/rgals,galxtr/rgals,galytr/rgals,galztr/rgals #compute (x-iy)/r for galaxies in ball around central
-                                                                                                                                             #zdivr=galztr/rgals
-                                                                                                                                             #xdivr=galxtr/rgals
-                                                                                                                                             #ydivr=galytr/rgals
-        xmiydivr,xdivr,ydivr,zdivr=(galxtr-1j*galytr),galxtr,galytr,galztr#broke this to see how not dividing by r affects results. #compute (x-iy)/r for galaxies in ball around central
 
+        # COMPUTE WEIGHTS
+        weighttime = time.time()
+        all_weights = compute_weight_matrix(galxtr,galytr,galztr,galwtr)
+        weighttime = time.time()-weighttime
 
-        #compute squares: need to replace inline computations using these below.
+        if verb: print("weights computation time: %.3e (Python)"%weighttime)
 
-        xdivrsq=xdivr*xdivr # (x/r)^2
-        ydivrsq=ydivr*ydivr # (y/r)^2
-        zdivrsq=zdivr*zdivr # (z/r)^2
-        xmiydivrsq=xmiydivr*xmiydivr # ((x-iy)/r)^2
-        xmiydivrcu=xmiydivrsq*xmiydivr # ((x-iy)/r)^3
-        xmiydivrft=xmiydivrcu*xmiydivr # ((x-iy)/r)^4
-        xmiydivrfi=xmiydivrft*xmiydivr # ((x-iy)/r)^5
-        xmiydivrsi=xmiydivrfi*xmiydivr # ((x-iy)/r)^6
-        xmiydivrse=xmiydivrsi*xmiydivr # ((x-iy)/r)^7
-        xmiydivret=xmiydivrse*xmiydivr # ((x-iy)/r)^8
-        xmiydivrni=xmiydivret*xmiydivr # ((x-iy)/r)^9
-        xmiydivrtn=xmiydivrni*xmiydivr # ((x-iy)/r)^10
-
-        zdivrcu=zdivrsq*zdivr # (z/r)^3
-        zdivrft=zdivrsq*zdivrsq # (z/r)^4
-        zdivrfi=zdivrft*zdivr # (z/r)^5
-        zdivrsi=zdivrfi*zdivr # (z/r)^6
-        zdivrse=zdivrsi*zdivr # (z/r)^7
-        zdivret=zdivrse*zdivr # (z/r)^8
-        zdivrni=zdivret*zdivr # (z/r)^9
-        zdivrtn=zdivrni*zdivr # (z/r)^10
-        #compute spherical harmonics on all bins for this galaxy; query_ball finds central itself too but this doesn't contribute to spherical harmonics because x, y, z are zero.
-        #newly added sept 2.
         end_time_transf=time.time()
         transftime=end_time_transf-start_time_transf+transftime
         start_time_hist=time.time()
-
-        if run_tests:
-            y00=.5*(1./np.pi)**.5*histogram(rgals,bins=binarr,weights=galwtr)
-            complex_test_start=time.time()
-            y1m1=.5*(3./(2.*np.pi))**.5*histogram(rgals,bins=binarr,weights=galwtr*xmiydivr) #this just gives histogram y values; [1] would give bin edges with length of [0] + 1.
-            complex_test_end=time.time()
-            complextime=complex_test_end-complex_test_start+complextime
-            real_test_start=time.time()
-            y1m1test=.5*(3./(2.*np.pi))**.5*(histogram(rgals,bins=binarr,weights=galwtr*xdivr)-1j*histogram(rgals,bins=binarr,weights=galwtr*ydivr))
-            real_test_end=time.time()
-            realtime=real_test_end-real_test_start+realtime
-
-        if verb: print("isn't there a way to automate these?")
-
-        # accumulate all weighted spherical harmonics, including particle weights
-        # these are just the values of a_lm(r) in each bin
-        all_weights = galwtr*np.vstack([# ell = 0
-                                 .5*(1./np.pi)**.5*np.ones_like(rgals),
-                                 # ell = 1
-                                 .5*(3./(2.*np.pi))**.5*xmiydivr,
-                                 .5*(3./np.pi)**.5*zdivr,
-                                 # ell = 2
-                                 .25*(15./(2.*np.pi))**.5*xmiydivrsq,
-                                 .5*(15./(2.*np.pi))**.5*xmiydivr*zdivr,
-                                 .25*(5./np.pi)**.5*(2.*zdivrsq-xdivrsq-ydivrsq),
-                                 # ell = 3
-                                 .125*(35./np.pi)**.5*xmiydivrcu,
-                                 .25*(105./(2.*np.pi))**.5*xmiydivrsq*zdivr,
-                                 .125*(21./np.pi)**.5*xmiydivr*(4.*zdivrsq-xdivrsq-ydivrsq),
-                                 .25*(7./np.pi)**.5*zdivr*(2.*zdivrsq-3.*xdivrsq-3.*ydivrsq),
-                                 # ell = 4
-                                 .1875*np.sqrt(35./(2.*np.pi))*xmiydivrft,
-                                 .375*np.sqrt(35./np.pi)*xmiydivrcu*zdivr,
-                                 .375*np.sqrt(5./(2.*np.pi))*xmiydivrsq*(7.*zdivrsq-1),
-                                 .375*np.sqrt(5./np.pi)*xmiydivr*zdivr*(7.*zdivrsq-3.),
-                                 .1875*np.sqrt(1./np.pi)*(35.*zdivrft-30.*zdivrsq+3.),
-                                 # ell = 5
-                                 (3./32.)*np.sqrt(77./np.pi)*xmiydivrfi,
-                                 (3./16.)*np.sqrt(385./(2.*np.pi))*xmiydivrft*zdivr,
-                                 (1./32.)*np.sqrt(385./np.pi)*xmiydivrcu*(9.*zdivrsq-1.),
-                                 (1./8.)*np.sqrt(1155./(2.*np.pi))*xmiydivrsq*(3.*zdivrcu-zdivr),
-                                 (1./16.)*np.sqrt(165./(2.*np.pi))*xmiydivr*(21.*zdivrft-14.*zdivrsq+1.),
-                                 (1./16.)*np.sqrt(11./np.pi)*(63.*zdivrfi-70.*zdivrcu+15.*zdivr),
-                                 # ell = 6
-                                 (1./64.)*np.sqrt(3003./np.pi)*xmiydivrsi,
-                                 (3./32.)*np.sqrt(1001./np.pi)*xmiydivrfi*zdivr,
-                                 (3./32.)*np.sqrt(91./(2.*np.pi))*xmiydivrft*(11.*zdivrsq-1.),
-                                 (1./32.)*np.sqrt(1365./np.pi)*xmiydivrcu*(11.*zdivrcu-3.*zdivr),
-                                 (1./64.)*np.sqrt(1365./np.pi)*xmiydivrsq*(33.*zdivrft-18.*zdivrsq+1.),
-                                 (1./16.)*np.sqrt(273./(2.*np.pi))*xmiydivr*(33.*zdivrfi-30.*zdivrcu+5.*zdivr),
-                                 (1./32.)*np.sqrt(13./np.pi)*(231.*zdivrsi-315.*zdivrft+105.*zdivrsq-5.),
-                                 # ell = 7
-                                 (3./64.)*np.sqrt(715./(2.*np.pi))*xmiydivrse,
-                                 (3./64.)*np.sqrt(5005./np.pi)*xmiydivrsi*zdivr,
-                                 (3./64.)*np.sqrt(385./(2.*np.pi))*xmiydivrfi*(13.*zdivrsq-1.),
-                                 (3./32.)*np.sqrt(385./(2.*np.pi))*xmiydivrft*(13.*zdivrcu-3.*zdivr),
-                                 (3./64.)*np.sqrt(35./(2.*np.pi))*xmiydivrcu*(143.*zdivrft-66.*zdivrsq+3.),
-                                 (3./64.)*np.sqrt(35./np.pi)*xmiydivrsq*(143.*zdivrfi-110.*zdivrcu+15.*zdivr),
-                                 (1./64.)*np.sqrt(105./(2.*np.pi))*xmiydivr*(429.*zdivrsi-495.*zdivrft+135.*zdivrsq-5.),
-                                 (1./32.)*np.sqrt(15./np.pi)*(429.*zdivrse-693.*zdivrfi+315.*zdivrcu-35.*zdivr),
-                                 # ell = 8
-                                 (3./256.)*np.sqrt(12155./(2.*np.pi))*xmiydivret,
-                                 (3./64.)*np.sqrt(12155./(2.*np.pi))*xmiydivrse*zdivr,
-                                 (1./128.)*np.sqrt(7293./np.pi)*xmiydivrsi*(15.*zdivrsq-1.),
-                                 (3./64.)*np.sqrt(17017./(2.*np.pi))*xmiydivrfi*(5.*zdivrcu-zdivr),
-                                 (3./128.)*np.sqrt(1309./(2.*np.pi))*xmiydivrft*(65.*zdivrft-26.*zdivrsq+1.),
-                                 (1./64.)*np.sqrt(19635./(2.*np.pi))*xmiydivrcu*(39.*zdivrfi-26.*zdivrcu+3.*zdivr),
-                                 (3./128.)*np.sqrt(595./np.pi)*xmiydivrsq*(143.*zdivrsi-143.*zdivrft+33.*zdivrsq-1.),
-                                 (3./64.)*np.sqrt(17./(2.*np.pi))*xmiydivr*(715.*zdivrse-1001.*zdivrfi+385.*zdivrcu-35.*zdivr),
-                                 (1./256.)*np.sqrt(17./np.pi)*(6435.*zdivret-12012.*zdivrsi+6930.*zdivrft-1260.*zdivrsq+35.),
-                                 # ell = 9
-                                 (1./512.)*np.sqrt(230945./np.pi)*xmiydivrni,
-                                 (3./256.)*np.sqrt(230945./(2.*np.pi))*xmiydivret*zdivr,
-                                 (3./512.)*np.sqrt(13585./np.pi)*xmiydivrse*(17.*zdivrsq-1.),
-                                 (1./128.)*np.sqrt(40755./np.pi)*xmiydivrsi*(17.*zdivrcu-3.*zdivr),
-                                 (3./256.)*np.sqrt(2717./np.pi)*xmiydivrfi*(85.*zdivrft-30.*zdivrsq+1.),
-                                 (3./128.)*np.sqrt(95095./(2.*np.pi))*xmiydivrft*(17.*zdivrfi-10.*zdivrcu+zdivr),
-                                 (1./256.)*np.sqrt(21945./np.pi)*xmiydivrcu*(221.*zdivrsi-195.*zdivrft+39.*zdivrsq-1.),
-                                 (3./128.)*np.sqrt(1045./np.pi)*xmiydivrsq*(221.*zdivrse-273.*zdivrfi+91.*zdivrcu-7.*zdivr),
-                                 (3./256.)*np.sqrt(95./(2.*np.pi))*xmiydivr*(2431.*zdivret-4004.*zdivrsi+2002.*zdivrft-308.*zdivrsq+7.),
-                                 (1./256.)*np.sqrt(19./np.pi)*12155.*(zdivrni-25740.*zdivrse+18018.*zdivrfi-4620.*zdivrcu+315.*zdivr),
-                                 # ell = 10
-                                 (1./1024.)*np.sqrt(969969./np.pi)*xmiydivrtn,
-                                 (1./512.)*np.sqrt(4849845./np.pi)*(xmiydivrni*zdivr),
-                                 (1./512.)*np.sqrt(255255./(2.*np.pi))*(xmiydivret*(19.*zdivrsq-1.)),
-                                 (3./512.)*np.sqrt(85085./np.pi)*(xmiydivrse*(19.*zdivrcu-3.*zdivr)),
-                                 (3./1024.)*np.sqrt(5005./np.pi)*(xmiydivrsi*(323.*zdivrft-102.*zdivrsq+3.)),
-                                 (3./256.)*np.sqrt(1001./np.pi)*(xmiydivrfi*(323.*zdivrfi-170.*zdivrcu+15.*zdivr)),
-                                 (3./256.)*np.sqrt(5005./(2.*np.pi))*(xmiydivrft*(323.*zdivrsi-255.*zdivrft+45.*zdivrsq-1.)),
-                                 (3./256.)*np.sqrt(5005./np.pi)*(xmiydivrcu*(323.*zdivrse-357.*zdivrfi+105.*zdivrcu-7.*zdivr)),
-                                 (3./512.)*np.sqrt(385./(2.*np.pi))*(xmiydivrsq*(4199.*zdivret-6188.*zdivrsi+2730.*zdivrft-364.*zdivrsq+7.)),
-                                 (1./256.)*np.sqrt(1155./(2.*np.pi))*(xmiydivr*(4199.*zdivrni-7956.*zdivrse+4914.*zdivrfi-1092.*zdivrcu+63.*zdivr)),
-                                 (1./512.)*np.sqrt(21./np.pi)*(46189.*zdivrtn-109395.*zdivret+90090.*zdivrsi-30030.*zdivrft+3465.*zdivrsq-63.),
-                                 ])
-        all_weights = np.asarray(all_weights,dtype=np.complex128)
 
         # histogram all these weights at once
         # this computes the Y_lm coefficients in a single list
         # the ordering is Y_00, Y_{1-1} Y_{10} Y_{2-2} etc.
         # dimension is (N_mult,N_bin) where N_mult is number of multipoles = (numell)*(numell+1)/2
+        hist1 = time.time()
         y_all = histogram_multi(rgals, bins=binarr, weight_matrix=all_weights)
+        if verb: print("Histogramming function time: %.3e"%(time.time()-hist1))
 
         end_time_hist=time.time()
         histtime=end_time_hist-start_time_hist+histtime
@@ -402,31 +433,40 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
 
         # compute bin centers on the first iteration only
         if first_it:
-            print('do we actually use these?')
+            if verb: print('do we actually use these?')
             bin_val = np.ravel(np.outer(np.arange(nbins)+0.5,np.arange(nbins)+0.5))
             first_it = 0
 
         # Now perform summations into bins
         # Note that the code is in cython and defined in cython_utils.pyx
-        # this gives a ~ 5x speed-boost for the 4PCF
+        # this gives a ~ 100x speed-boost for the 4PCF
 
         y_all_conj = y_all.conjugate() # compute complex conjugates only once
 
         if use_cython:
-            ## NB: everything is in pure C in these functions, and arrays are converted to C on input
-            # Only the zeta3/4 arrays are interacted with pythonically.
-            # Might be able to slightly speed-up by writing to a C copy of array instead? And perhaps holding in C?
-            # Also could load weights purely in C
-            # Unlikely to have major effects though probably (especially for weights)
+            ## NB: most things are in pure C in these functions, and arrays are converted to C memoryviews on input
 
+            ### NPCF Classes
             t3pt = time.time()
-            cython_utils.threepcf_sum(y_all, y_all_conj, zeta3, weights_3pcf)
+            ThreePCF.add_to_sum(y_all, y_all_conj)
             t3pt = time.time()-t3pt
 
-            t4pt = time.time()
-            cython_utils.fourpcf_sum(y_all, y_all_conj, zeta4, weights_4pcf)
-            t4pt = time.time()-t4pt
-            print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))
+            if compute_4PCF:
+                t4pt = time.time()
+                FourPCF.add_to_sum(y_all, y_all_conj)
+                t4pt = time.time()-t4pt
+
+            # #### NPCF Functions
+            # t3pt2 = time.time()
+            # cython_utils.threepcf_sum(y_all, y_all_conj, zeta3, weights_3pcf)
+            # t3pt2 = time.time()-t3pt2
+            #
+            # t4pt2 = time.time()
+            # cython_utils.fourpcf_sum(y_all, y_all_conj, zeta4, weights_4pcf)
+            # t4pt2 = time.time()-t4pt2
+
+            if verb: print("Summation took %.2e s (3PCF) / %.2e s (4PCF) in class"%(t3pt, t4pt))
+            #if verb: print("Summation took %.2e s (3PCF) / %.2e s (4PCF) in function"%(t3pt2, t4pt2))
 
         ### Alternatively use python:
         ### OLD + PROBABLY DOESNT WORK
@@ -501,13 +541,16 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
             fourpcf_sum(y_all, zeta4)
             t4pt = time.time()-t4pt
 
-            print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))
+            #print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))
 
         end_time_binning=time.time()
         bintime=end_time_binning-start_time_binning+bintime
 
+# Create outputs
+zeta3 = ThreePCF.zeta3
+zeta4 = FourPCF.zeta4
+
 print("NB: ordering has all radial bins in (a,b,c) ordering as a 1D array")
-exit()
 
 #2.*np.pi this latter factor was to agree with Eisenstein C++ code, which we now know also does not have right normalization factor, but that cancels out in edge correction.
 
@@ -552,6 +595,8 @@ print("complextesttime=",complextime)
 print("realtesttime=",realtime)
 
 print("\nTOTAL TIME: %.4f seconds for ngal = %d"%(timecost,ngal))
+
+exit()
 
 #----
 #Load back in results, if you like.
