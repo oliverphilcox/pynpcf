@@ -13,7 +13,7 @@ from scipy import spatial
 #custom cython functions used here
 import cython_utils
 
-################## Histogram code from numpy ##########
+######################## HISTOGRAM CODE (from numpy) ########################
 
 def _search_sorted_inclusive(a, v):
     """
@@ -53,28 +53,35 @@ def histogram_multi(a, bins=10, weight_matrix=None):
 
     return n
 
-#######################################################setup definitions#######################################################################
+######################## INPUT PARAMETERS ##############################
 
-### PARAMETERS
 #infile = 'sample_feb27_unity_weights_rescale400_first500.dat'
 infile = 'patchy_gal_pos.txt'
 cut_number = 10000 # maximum number of galaxies to read in
 boxsize = 2500. #size of box used in sample data file.
-rescale = .3 #if you want to rescale the box (unity if not).
-no_weights = True # replace weights with unity
-include_norm3 = True # if True, include factor of (-1)^ell / sqrt[2ell+1] for 3PCF for consistency with NPCF
-use_cython = True # if True, bin using compiled Cython functions, if False, use Pythonic versions
-compute_4PCF = True # else just compute 3PCF
+rescale = 1. #if you want to rescale the box (unity if not).
 
 # Binning
 rmax=np.sqrt(3.)*100. # *5
 rmin=1e-5
 nbins=10 # 3
-numell = 11
+numell = 6
+
+# Other switches (mostly for testing)
+no_weights = True # replace weights with unity
+include_norm3 = True # if True, include factor of (-1)^ell / sqrt[2ell+1] for 3PCF for consistency with NPCF
+use_cython = True # if True, bin using compiled Cython functions, if False, use Pythonic versions
+compute_4PCF = True # else just compute 3PCF
+
+### Verbosity / output options
+verb=0 # if True, print useful(?) messages throughout
+run_tests = 0 # if True, run some tests of the code
+print_output = 0 # if True, print the output in the same format as the C++ code
 
 assert numell<=11, "weights only computed up to ell=10!"
 
-### LOAD IN DATA
+######################## LOAD IN DATA ##############################
+
 if not os.path.exists(infile):
     raise Exception("Infile %s does not exist!"%infile)
 boxsize *= rescale #this is important so the periodic duplicates are made correctly.
@@ -92,19 +99,12 @@ print("Number density: %.2e"%(len(galx)/(width_x*width_y*width_z)))
 assert(max([width_x,width_y,width_z])<boxsize)
 print("number in file=",len(galx))
 
-### Verbosity / output options
-verb=0 # if True, print useful(?) messages throughout
-run_tests = 0 # if True, run some tests of the code
-print_output = 0 # if True, print the output in the same format as the C++ code
-
 start_time=time.time()
-linspace=0.
 
-eightpi_sq=8.*np.pi**2
 eps=1e-8
 ngal=len(galx)
 
-#### SPECIFY BINNING
+# Define binning
 deltr = float(rmax-rmin)/nbins
 binarr=np.mgrid[0:nbins+1]*deltr
 n_mult = numell*(numell+1)//2
@@ -134,7 +134,7 @@ print("\ntime to set constants and bins=",end_time-start_time)
 
 start_time = time.time()
 
-### WEIGHTING MATRIX #############
+#################### COMPUTE / LOAD WEIGHTING MATRIX ####################
 
 if os.path.exists('weights_3pcf_n%d.npy'%numell):
     print("Loading 3PCF weights from file")
@@ -198,6 +198,8 @@ if compute_4PCF:
 end_time = time.time()
 print("\ntime to define 3PCF + 4PCF weighting matrices=",end_time-start_time)
 
+
+#################### ASSIGN TO TREE ####################
 start_time=time.time()
 
 #now loop over shiftbox to append virtual boxes to coordinate list.
@@ -241,6 +243,8 @@ if use_cython:
     ThreePCF = cython_utils.ThreePCF(numell, nbins, weights_3pcf)
     if compute_4PCF:
         FourPCF = cython_utils.FourPCF(numell, nbins, weights_4pcf)
+
+#################### LEGENDRE WEIGHTS CODE ####################
 
 def compute_weight_matrix(galxtr,galytr,galztr,galwtr):
     """Compute the matrix of spherical harmonics from input x,y,z,w matrices.
@@ -379,6 +383,7 @@ def compute_weight_matrix(galxtr,galytr,galztr,galwtr):
     all_weights *= galwtr
     return all_weights
 
+#################### MAIN LOOP ####################
 
 first_it = 1 # if this is the first iteration
 for i in range(0,totalits): #do nperit galaxies at a time for totalits total iterations
@@ -391,6 +396,7 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
     ball=tree.query_ball_point(centralgals,rmax+eps) #object with, for each index, an array with the ball of rmax about the central galaxy of that index; e.g. ball[0] gives indices of gals. within rmax of the 0th centralgal
     end_time_query=time.time()
     querytime=end_time_query-start_time_query+querytime
+
     for w in range(0,nperit):
         start_time_transf=time.time()
         ball[w].remove(i*nperit+w)
@@ -546,7 +552,7 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         end_time_binning=time.time()
         bintime=end_time_binning-start_time_binning+bintime
 
-# Create outputs
+#################### CREATE OUTPUTS ####################
 zeta3 = ThreePCF.zeta3
 zeta4 = FourPCF.zeta4
 
@@ -675,7 +681,7 @@ if docheck:
 
 
 #what is correct factor here? may 27 2015.
-    zetacts = [zetacts[i]*(2.*i+1.)/2./eightpi_sq for i in range(numell)]
+    zetacts = [zetacts[i]*(2.*i+1.)/2./(8.*np.pi**2) for i in range(numell)]
     end_time=time.time()
     timecostct=end_time-start_time
     print("timecostct=", timecostct)
