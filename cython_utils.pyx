@@ -28,53 +28,51 @@ if warnings: print("should preload weight matrix also")
 @cython.boundscheck(False)
 @cython.cdivision(False)
 @cython.wraparound(False)
-cpdef void threepcf_sum(np.ndarray[CTYPE_t, ndim=2] y_all, np.ndarray[DTYPE_t, ndim=2] zeta3, np.ndarray[DTYPE_t, ndim=1] weights_3pcf):
+cpdef void threepcf_sum(complex[:,:] y_all, complex[:,:] y_all_conj, double[:,:] zeta3, double[:] weights_3pcf):
     """Sum up multipole array into 3PCFs pythonically"""
     # sum up all ell (simply with weights)
     cdef int l1, m1, a, b, i
-    cdef np.ndarray[CTYPE_t, ndim=1] a_l1m1
-    cdef np.ndarray[CTYPE_t, ndim=1] a_l2m2
-    cdef CTYPE_t a1
-    cdef DTYPE_t this_weight
+    cdef complex[:] a_l1m1
+    cdef complex[:] a_l2m2
+    cdef complex a1w
+    cdef double this_weight
 
     # Fill up r2>=r1 elements of array
     for l1 in range(numell):
         for m1 in range(-l1,1):
             this_weight = weights_3pcf[l1**2+m1+l1]
             a_l1m1 = y_all[l1*(l1+1)//2+l1+m1]
-            a_l2m2 = a_l1m1.conjugate()*(-1.)**m1
+            a_l2m2 = y_all_conj[l1*(l1+1)//2+l1+m1]
             i = 0
             for a in range(nbins):
-                a1 = a_l1m1[a]
+                a1w = a_l1m1[a]*this_weight # a_lm(r)*weight
                 for b in range(a,nbins):
-                    zeta3[l1,i] += (a1*a_l2m2[b]).real*this_weight
+                    zeta3[l1,i] += (a1w*a_l2m2[b]).real
                     i += 1
 
 @cython.boundscheck(False)
 @cython.cdivision(False)
 @cython.wraparound(False)
-cpdef void fourpcf_sum(np.ndarray[CTYPE_t, ndim=2] y_all, np.ndarray[DTYPE_t, ndim=4] zeta4, np.ndarray[DTYPE_t, ndim=3] weights_4pcf):
-    """Sum up multipole array into 4PCFs"""
+cpdef void fourpcf_sum(complex[:,:] y_all, complex[:,:] y_all_conj, double[:,:,:,:] zeta4, double[:,:,:] weights_4pcf):
+    """Sum up multipole array into 4PCFs. Note this uses full C typing to avoid accessing numpy arrays, loading only C memviews.
+    This is possible since we don't do any operations on the arrays themselves
+    The only numpy array to access is zeta4"""
 
     cdef int l1, l2, l3, m1, m2, m3, i
-    cdef np.ndarray[CTYPE_t, ndim=1] a_l1m1
-    cdef np.ndarray[CTYPE_t, ndim=1] a_l2m2
-    cdef np.ndarray[CTYPE_t, ndim=1] a_l3m3
-    cdef DTYPE_t this_weight
-    cdef CTYPE_t a1w, a12w
+    cdef complex[:] a_l1m1
+    cdef complex[:] a_l2m2
+    cdef complex[:] a_l3m3
+    cdef double this_weight
+    cdef complex a1w, a12w
 
-    cdef np.ndarray[CTYPE_t, ndim=2] y_all_conj
-    cdef np.ndarray[CTYPE_t, ndim=2] local_y1
-    cdef np.ndarray[CTYPE_t, ndim=2] local_y2
-    cdef np.ndarray[CTYPE_t, ndim=2] local_y1_conj
-    cdef np.ndarray[CTYPE_t, ndim=2] local_y2_conj
-    cdef np.ndarray[CTYPE_t, ndim=2] local_y3
+    cdef complex[:,:] local_y1
+    cdef complex[:,:] local_y2
+    cdef complex[:,:] local_y1_conj
+    cdef complex[:,:] local_y2_conj
+    cdef complex[:,:] local_y3
 
     ## might be able to preload which bins to sum over, i.e. a list of {L1,L2,L3,M1,M2} etc. and their weights
-    ## this doens't actually improve things
-
-    # do all complex conjugation first
-    y_all_conj = y_all.conjugate()
+    ## this doesn't actually improve things
 
     for l1 in range(numell):
         local_y1 = y_all[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
@@ -130,4 +128,5 @@ cpdef void fourpcf_sum(np.ndarray[CTYPE_t, ndim=2] y_all, np.ndarray[DTYPE_t, nd
                                     zeta4[l1,l2,l3,i] += (a12w*a_l3m3[c]).real
                                     i += 1
 
-if warnings: print("could perhaps do better with a C++ NPCF class that is updated from python calls? conversion numpy -> C arrays will be slow however")
+
+#if warnings: print("could perhaps do better with a C++ NPCF class that is updated from python calls? conversion numpy -> C arrays will be slow however")

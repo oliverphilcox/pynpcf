@@ -142,19 +142,22 @@ else:
 
     if verb: print("note matrix could be a lot less sparse!")
     for ell_1 in range(numell):
-        for m_1 in range(-ell_1,ell_1+1):
+        for m_1 in range(-ell_1,1):
+            # nb: don't use m_1>0 here
             ell_2 = ell_1
             m_2 = -m_1
             # enforce (ell_i = ell_j) and m_i = m_j,
             # add factor of 2x if m1 != 0 by symmmetry
             if m_1==0:
-                sym_fac = 1
+                tmp_fac = 1.
             else:
-                sym_fac = 2
+                tmp_fac = 2.
+
+            # compute weights (note we absorb extra factor of (-1)^m from complex conjugate)
             if not include_norm3:
-                weights_3pcf[ell_1**2+m_1+ell_1] = (-1.)**(-m_1)*sym_fac
+                weights_3pcf[ell_1**2+m_1+ell_1] = tmp_fac
             else:
-                weights_3pcf[ell_1**2+m_1+ell_1] = (-1.)**(ell_1-m_1)/np.sqrt(2.*ell_1+1.)*sym_fac
+                weights_3pcf[ell_1**2+m_1+ell_1] = (-1.)**(ell_1)/np.sqrt(2.*ell_1+1.)*tmp_fac
     np.save('weights_3pcf_n%d'%numell,weights_3pcf)
 
 if os.path.exists('weights_4pcf_n%d.npy'%numell):
@@ -407,17 +410,26 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
         # Note that the code is in cython and defined in cython_utils.pyx
         # this gives a ~ 5x speed-boost for the 4PCF
 
+        y_all_conj = y_all.conjugate() # compute complex conjugates only once
+
         if use_cython:
+            ## NB: everything is in pure C in these functions, and arrays are converted to C on input
+            # Only the zeta3/4 arrays are interacted with pythonically.
+            # Might be able to slightly speed-up by writing to a C copy of array instead? And perhaps holding in C?
+            # Also could load weights purely in C
+            # Unlikely to have major effects though probably (especially for weights)
+
             t3pt = time.time()
-            cython_utils.threepcf_sum(y_all, zeta3, weights_3pcf)
+            cython_utils.threepcf_sum(y_all, y_all_conj, zeta3, weights_3pcf)
             t3pt = time.time()-t3pt
 
             t4pt = time.time()
-            cython_utils.fourpcf_sum(y_all, zeta4, weights_4pcf)
+            cython_utils.fourpcf_sum(y_all, y_all_conj, zeta4, weights_4pcf)
             t4pt = time.time()-t4pt
             print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))
 
         ### Alternatively use python:
+        ### OLD + PROBABLY DOESNT WORK
         else:
 
             # Now perform summations (either python or cython)
