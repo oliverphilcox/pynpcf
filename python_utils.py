@@ -16,7 +16,8 @@ from sympy.physics.wigner import wigner_3j
 def _search_sorted_inclusive(a, v):
     """
     Like `searchsorted`, but where the last item in `v` is placed on the right.
-    In the context of a histogram, this makes the last bin edge inclusive
+    In the context of a histogram, this makes the last bin edge inclusive.
+    Taken from numpy.
     """
     return np.concatenate((
         a.searchsorted(v[:-1], 'left'),
@@ -25,7 +26,7 @@ def _search_sorted_inclusive(a, v):
 
 def histogram_multi(a, bins=10, weight_matrix=None):
     r"""
-    Compute the histogram of a set of data. Taken from numpy and modified to use multiple weihgts at once
+    Compute the histogram of a set of data. Taken from numpy and modified to use multiple weights at once
 
     """
     # We set a block size, as this allows us to iterate over chunks when
@@ -122,12 +123,10 @@ def compute_4pcf_coupling_matrix(numell):
 
 #################### LEGENDRE WEIGHTS CODE ####################
 
-def compute_weight_matrix(galxtr,galytr,galztr,galwtr, numell):
+def compute_weight_matrix(xmiydivr,zdivr,galwtr,numell):
     """Compute the matrix of spherical harmonics from input x,y,z,w matrices.
     NB: since this is just array multiplication, switching to Cython won't lead to a significant speed boost.
-    Note that we don't divide by r here to make things into unit vectors."""
-
-    xmiydivr,xdivr,ydivr,zdivr=(galxtr-1j*galytr),galxtr,galytr,galztr
+    Note that the inputs are arrays of (x-iy)/r, z/r and weight."""
 
     # Compute spherical harmonics on all bins for this galaxy; query_ball finds central itself too but this doesn't contribute to spherical harmonics because x, y, z are zero.
 
@@ -135,28 +134,26 @@ def compute_weight_matrix(galxtr,galytr,galztr,galwtr, numell):
     n_mult = numell*(numell+1)//2
     all_weights = np.zeros((n_mult,len(galwtr)),np.complex128) # assign memory
 
-    all_weights[0] = .5*np.ones_like(galxtr)
+    all_weights[0] = .5*np.ones_like(galwtr)
     if numell>1:
         # ell = 1
         all_weights[1] = .5*(1./2.)**.5*xmiydivr
         all_weights[2] = .5*zdivr
         if numell>2:
             # ell = 2
-            xdivrsq=xdivr*xdivr # (x/r)^2
-            ydivrsq=ydivr*ydivr # (y/r)^2
             zdivrsq=zdivr*zdivr # (z/r)^2
             xmiydivrsq=xmiydivr*xmiydivr # ((x-iy)/r)^2
             all_weights[3] = .25*(3./2.)**.5*xmiydivrsq
             all_weights[4] = .5*(3./2.)**.5*xmiydivr*zdivr
-            all_weights[5] = .25*(2.*zdivrsq-xdivrsq-ydivrsq)
+            all_weights[5] = .25*(3.*zdivrsq-1.)
             if numell>3:
                 # ell = 3
                 zdivrcu=zdivrsq*zdivr # (z/r)^3
                 xmiydivrcu=xmiydivrsq*xmiydivr # ((x-iy)/r)^3
                 all_weights[6] = .125*(5.)**.5*xmiydivrcu
                 all_weights[7] = .25*(15./2.)**.5*xmiydivrsq*zdivr
-                all_weights[8] = .125*(3.)**.5*xmiydivr*(4.*zdivrsq-xdivrsq-ydivrsq)
-                all_weights[9] = .25*zdivr*(2.*zdivrsq-3.*xdivrsq-3.*ydivrsq)
+                all_weights[8] = .125*(3.)**.5*xmiydivr*(5.*zdivrsq-1.)
+                all_weights[9] = .25*zdivr*(5.*zdivrsq-3.)
                 if numell>4:
                     # ell = 4
                     zdivrft=zdivrsq*zdivrsq # (z/r)^4

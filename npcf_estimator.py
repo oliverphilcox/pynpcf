@@ -21,7 +21,7 @@ from python_utils import *
 infile = 'patchy_gal_pos.txt'
 cut_number = 1001 # maximum number of galaxies to read in
 boxsize = 2500. #size of box used in sample data file.
-rescale = 1. # if you want to rescale the box (unity if not).
+rescale = .2 # if you want to rescale the box (unity if not).
 outstr = 'test' # string to prepend to output files
 
 # Binning
@@ -33,7 +33,7 @@ numell = 11
 # Other switches (mostly for testing)
 no_weights = True # replace weights with unity
 compute_4PCF = True # else just compute 3PCF
-n_its = 5 # number of iterations to split the computation into (each analyzes N_gal/n_it central galaxies)
+n_its = 1 # number of iterations to split the computation into (each analyzes N_gal/n_it central galaxies)
 verb = 0 # if True, print useful(?) messages throughout
 
 assert numell<=11, "# Spherical harmonic weights are configured only up to ell=10!"
@@ -193,7 +193,7 @@ for i in range(0,totalits):
     print("# Analyzing group number = %d of %d"%(i+1,totalits))
     # Select out central galaxies to use; note central galaxies must be first in list of coordinates including shift, which they will be by construction.
     centralgals=galcoords[i*nperit:min((i+1)*nperit,ngal)]
-    print("This contains %d central galaxies, starting from galaxy %d."%(len(centralgals),i*nperit))
+    print("This contains %d central galaxies, starting from galaxy %d."%(len(centralgals),i*nperit+1))
 
     # Query the tree to pick out the galaxies within rmax of each central.
     # e.g. ball[0] gives indices of gals. within rmax of the 0th centralgal
@@ -216,20 +216,19 @@ for i in range(0,totalits):
             continue
 
         # Transform to reference frame of desired central galaxy
-        galxtr, galytr, galztr=np.asarray(galcoords[ball_temp][:,:3]-centralgals[w][:3],dtype=np.complex128).T
+        galxtr, galytr, galztr=np.asarray(galcoords[ball_temp][:,:3]-centralgals[w][:3]).T
         galwtr = galcoords[ball_temp][:,3] # galaxy weight
 
         # Compute squared distance from center
         rgalssq=galxtr*galxtr+galytr*galytr+galztr*galztr+eps
         rgals=np.sqrt(rgalssq)
 
-        if verb: print("Should these be unit vectors??")
-
         ## COMPUTE SPHERICAL HARMONIC WEIGHTS
         # These are the spherical harmonics for each galaxy, without radial binning
         weighttime = time.time()
-        all_weights = compute_weight_matrix(galxtr,galytr,galztr,galwtr,numell)
+        all_weights = compute_weight_matrix((galxtr-1.0j*galytr)/rgals,galztr/rgals,galwtr,numell)
         weighttime = time.time()-weighttime
+        del galxtr, galytr, galztr, galwtr, rgalssq
 
         if verb: print("Computation time for spherical harmonic weights (single galaxy): %.3e s"%weighttime)
 
