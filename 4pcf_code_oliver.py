@@ -65,7 +65,7 @@ rescale = 1. #if you want to rescale the box (unity if not).
 rmax=np.sqrt(3.)*100. # *5
 rmin=1e-5
 nbins=10 # 3
-numell = 6
+numell = 11
 
 # Other switches (mostly for testing)
 no_weights = True # replace weights with unity
@@ -93,11 +93,23 @@ if no_weights:
 width_x = np.max(galx)-np.min(galx)
 width_y = np.max(galy)-np.min(galy)
 width_z = np.max(galz)-np.min(galz)
-print("read %d galaxies from file with average weight %.2f"%(len(galx),np.mean(galw)))
-print("galaxy widths: [%.2e, %.2e, %.2e] vs boxsize %.2e"%(width_x,width_y,width_z,boxsize))
-print("Number density: %.2e"%(len(galx)/(width_x*width_y*width_z)))
 assert(max([width_x,width_y,width_z])<boxsize)
-print("number in file=",len(galx))
+
+## Print some diagnostics
+print("\nINPUT")
+print("----------")
+print("N_gal = %d"%len(galx))
+print("Mean weight = %.2e"%np.mean(galw))
+print("Particle Size: [%.2e, %.2e, %.2e]"%(width_x,width_y,width_z))
+print("Boxsize: %.2e"%(boxsize))
+print("Number density: %.2e"%(len(galx)/(width_x*width_y*width_z)))
+print("Binning: [%.2e, %.2e] in %d bins"%(rmin,rmax,nbins))
+print("L_max = %d"%(numell-1))
+if compute_4PCF:
+    print("Computing 3PCF + 4PCF")
+else:
+    print("Computing 3PCF only")
+print("----------\n")
 
 start_time=time.time()
 
@@ -198,7 +210,6 @@ if compute_4PCF:
 end_time = time.time()
 print("\ntime to define 3PCF + 4PCF weighting matrices=",end_time-start_time)
 
-
 #################### ASSIGN TO TREE ####################
 start_time=time.time()
 
@@ -243,6 +254,7 @@ if use_cython:
     ThreePCF = cython_utils.ThreePCF(numell, nbins, weights_3pcf)
     if compute_4PCF:
         FourPCF = cython_utils.FourPCF(numell, nbins, weights_4pcf)
+        FourPCF2 = cython_utils.FourPCF2(numell, nbins, weights_4pcf)
 
 #################### LEGENDRE WEIGHTS CODE ####################
 
@@ -554,7 +566,8 @@ for i in range(0,totalits): #do nperit galaxies at a time for totalits total ite
 
 #################### CREATE OUTPUTS ####################
 zeta3 = ThreePCF.zeta3
-zeta4 = FourPCF.zeta4
+if compute_4PCF:
+    zeta4 = FourPCF.zeta4
 
 print("NB: ordering has all radial bins in (a,b,c) ordering as a 1D array")
 
