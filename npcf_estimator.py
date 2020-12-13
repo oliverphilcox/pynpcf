@@ -186,6 +186,8 @@ querytime = 0.
 
 print("\nStarting main computation...\n")
 
+print("NB: We assume all output NPCFs to be *real* here. Is this valid??")
+
 # Now loop over the iterations
 for i in range(0,totalits):
 
