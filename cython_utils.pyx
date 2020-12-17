@@ -38,7 +38,7 @@ cdef class ThreePCF():
             self.weights_3pcf[i] = weights_3pcf[i]
 
         # Set number of radial bins in 3PCF with r1<=r2
-        self.n3pcf = self.nbins*(1+self.nbins)*(1+2*self.nbins)//6
+        self.n3pcf = self.nbins*(1+self.nbins)//2
 
         # Initialize 3PCF array of dimension (n_ell, n_3pcf)
         # This is where the matrix is physically stored
@@ -63,7 +63,7 @@ cdef class ThreePCF():
     @cython.boundscheck(False)
     @cython.cdivision(False)
     @cython.wraparound(False)
-    cpdef void add_to_sum(self, complex[:,:] y_all, complex[:,:] y_all_conj):
+    cpdef void add_to_sum(self, complex[:,:] y_all, complex[:,:] y_all_conj, double prim_weight):
         """"Add multipoles in y_all to the 3PCF summation.
         This is stored in the C array and not returned here.
 
@@ -84,7 +84,7 @@ cdef class ThreePCF():
                 a_l2m2 = y_all_conj[l1*(l1+1)//2+l1+m1]
                 i = 0
                 for a in range(self.nbins):
-                    a1w = a_l1m1[a]*this_weight
+                    a1w = a_l1m1[a]*this_weight*prim_weight
                     for b in range(a,self.nbins):
                         self.zeta3[self.n3pcf*l1+i] += (a1w*a_l2m2[b]).real
                         i += 1
@@ -117,7 +117,7 @@ cdef class FourPCF():
                     index += 1
 
         # Set number of radial bins in 3PCF with r1<=r2
-        self.n4pcf = self.nbins*(1+self.nbins)*(2+self.nbins)*(1+3*self.nbins)//24
+        self.n4pcf = self.nbins*(1+self.nbins)*(2+self.nbins)//6
 
         # Initialize 4PCF array of dimension (n_ell, n_ell, n_ell, n_4pcf)
         # This is where the matrix is physically stored
@@ -143,7 +143,7 @@ cdef class FourPCF():
     @cython.boundscheck(False)
     @cython.cdivision(False)
     @cython.wraparound(False)
-    cpdef void add_to_sum(self, complex[:,:] y_all, complex[:,:] y_all_conj):
+    cpdef void add_to_sum(self, complex[:,:] y_all, complex[:,:] y_all_conj, double prim_weight):
         """"Add multipoles in y_all to the 4PCF summation.
         This is stored in the C array and not returned here.
 
@@ -212,7 +212,7 @@ cdef class FourPCF():
                             # Sum up array, noting that we fill only r3>=r2>=r1
                             i = 0
                             for a in range(self.nbins):
-                                a1w = a_l1m1[a]*this_weight
+                                a1w = prim_weight*a_l1m1[a]*this_weight
                                 for b in range(a,self.nbins):
                                     a12w = a1w*a_l2m2[b]
                                     for c in range(b,self.nbins):

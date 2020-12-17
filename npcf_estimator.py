@@ -17,26 +17,44 @@ from python_utils import *
 
 ######################## INPUT PARAMETERS ##############################
 
-#infile = 'sample_feb27_unity_weights_rescale400_first500.dat'
-infile = 'patchy_gal_pos.txt'
-cut_number = 1001 # maximum number of galaxies to read in
-boxsize = 2500. #size of box used in sample data file.
-rescale = .2 # if you want to rescale the box (unity if not).
-outstr = 'test' # string to prepend to output files
+# These can be defined on command line or set here if not specified
+infile_default = '/projects/QUIJOTE/Oliver/npcf/boss_cmass_sub100_DmR.txt' # input file
+outstr_default = 'test100' # string to prepend to output files
+
+cut_number = -1 # maximum number of galaxies to read in. If -1, read in all galaxies
+boxsize = 3300. #size of box used in sample data file.
+rescale = 1. # if you want to rescale the box (unity if not).
 
 # Binning
-rmax = np.sqrt(3.)*100.
+rmax = 200.
+#np.sqrt(3.)*100.
 rmin = 1e-5
-nbins= 10
+nbins = 20
 numell = 11
 
 # Other switches (mostly for testing)
-no_weights = True # replace weights with unity
-compute_4PCF = True # else just compute 3PCF
-n_its = 1 # number of iterations to split the computation into (each analyzes N_gal/n_it central galaxies)
+no_weights = False # replace weights with unity
+compute_4PCF = False # else just compute 3PCF
+n_its = 10 # number of iterations to split the computation into (each analyzes N_gal/n_it central galaxies)
 verb = 0 # if True, print useful(?) messages throughout
 
 assert numell<=11, "# Spherical harmonic weights are configured only up to ell=10!"
+
+
+### Read the infile and outstring from the command line, if present
+if len(sys.argv)>3:
+    print("Usage python npcf_estimator.py INFILE OUTSTRING")
+    sys.exit()
+
+if len(sys.argv)>1:
+    infile = str(sys.argv[1]) # input (data-random) or (random) datafile [with correctly transformed weights]
+else:
+    infile = infile_default
+
+if len(sys.argv)>2:
+    outstr = str(sys.argv[2]) # string to prepend to output files
+else:
+    outstr = outstr_default
 
 ######################## LOAD IN DATA ##############################
 
@@ -44,14 +62,16 @@ assert numell<=11, "# Spherical harmonic weights are configured only up to ell=1
 if not os.path.exists(infile):
     raise Exception("# Infile %s does not exist!"%infile)
 
-infile = np.loadtxt(infile,unpack=True)[:,:cut_number]
+if cut_number==-1: # don't cut down the input file
+    infile = np.loadtxt(infile,unpack=True)
+else:
+    infile = np.loadtxt(infile,unpack=True)[:,:cut_number]
 
-if len(infile!=4):
-    assert len(infile==3), "# Input file has incorrect format!"
+if len(infile)!=4:
+    assert len(infile)==3, "# Input file has incorrect format!"
     if not no_weights:
         print("# No weights are supplied. They will be set to unity.")
         no_weights = True
-        assert len(infile==3)
 galx, galy, galz, galw = infile
 del infile
 ngal=len(galx)
@@ -67,7 +87,7 @@ if no_weights:
 width_x = np.max(galx)-np.min(galx)
 width_y = np.max(galy)-np.min(galy)
 width_z = np.max(galz)-np.min(galz)
-assert max([width_x,width_y,width_z])<boxsize, "#"
+assert max([width_x,width_y,width_z])<boxsize, "# Galaxies do not fit inside the box!"
 
 ##Print some diagnostics
 print("\nINPUT")
@@ -94,7 +114,7 @@ eps=1e-8
 # Define binning
 deltr = float(rmax-rmin)/nbins
 binarr=np.mgrid[0:nbins+1]*deltr
-assert rmin<boxsize, "# Maximum radius must be less than boxsize!"
+assert rmax<boxsize, "# Maximum radius must be less than boxsize!"
 
 # Timers for diagnostics
 histtime=0
@@ -120,6 +140,7 @@ if os.path.exists(infile_3pcf):
     print("Loading precomputed 3PCF coupling weights from file")
     weights_3pcf = np.asarray(np.load(infile_3pcf),dtype=np.float64)
 else:
+    print("Computing 3PCF coupling weights")
     weights_3pcf = compute_3pcf_coupling_matrix(numell)
 
 if compute_4PCF:
@@ -186,7 +207,7 @@ querytime = 0.
 
 print("\nStarting main computation...\n")
 
-print("NB: We assume all output NPCFs to be *real* here. Is this valid??")
+print("NB: We assume all output NPCFs to be *real* here. Should probably remove odd parity re this")
 
 # Now loop over the iterations
 for i in range(0,totalits):
@@ -200,7 +221,7 @@ for i in range(0,totalits):
     # Query the tree to pick out the galaxies within rmax of each central.
     # e.g. ball[0] gives indices of gals. within rmax of the 0th centralgal
     start_time_query=time.time()
-    ball=tree.query_ball_point(centralgals,rmax+eps)
+    ball=tree.query_ball_point(centralgals,rmax+eps+deltr) # add a little leeway to ensure we don't miss any galaxies!
     end_time_query=time.time()
     querytime=end_time_query-start_time_query+querytime
 
@@ -220,6 +241,7 @@ for i in range(0,totalits):
         # Transform to reference frame of desired central galaxy
         galxtr, galytr, galztr=np.asarray(galcoords[ball_temp][:,:3]-centralgals[w][:3]).T
         galwtr = galcoords[ball_temp][:,3] # galaxy weight
+        prim_weight = centralgals[w][3] # weight of central
 
         # Compute squared distance from center
         rgalssq=galxtr*galxtr+galytr*galytr+galztr*galztr+eps
@@ -229,6 +251,7 @@ for i in range(0,totalits):
         # These are the spherical harmonics for each galaxy, without radial binning
         weighttime = time.time()
         all_weights = compute_weight_matrix((galxtr-1.0j*galytr)/rgals,galztr/rgals,galwtr,numell)
+
         weighttime = time.time()-weighttime
         del galxtr, galytr, galztr, galwtr, rgalssq
 
@@ -260,13 +283,13 @@ for i in range(0,totalits):
 
         # 3PCF summations
         t3pt = time.time()
-        ThreePCF.add_to_sum(y_all, y_all_conj)
+        ThreePCF.add_to_sum(y_all, y_all_conj, prim_weight)
         t3pt = time.time()-t3pt
 
         # 4PCF summations
         if compute_4PCF:
             t4pt = time.time()
-            FourPCF.add_to_sum(y_all, y_all_conj)
+            FourPCF.add_to_sum(y_all, y_all_conj, prim_weight)
             t4pt = time.time()-t4pt
 
             if verb: print("Summation took %.2e s (3PCF) / %.2e s (4PCF)"%(t3pt, t4pt))

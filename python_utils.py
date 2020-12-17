@@ -61,7 +61,6 @@ def compute_3pcf_coupling_matrix(numell):
     It is stored as a numpy array of length numell^2"""
 
     weights_3pcf = np.zeros(numell**2,dtype=np.float64)
-    print("Computing 4PCF coupling matrix: this may take some time.")
 
     # Iterate over ell_1
     for ell_1 in range(numell):
@@ -78,7 +77,7 @@ def compute_3pcf_coupling_matrix(numell):
             else:
                 tmp_fac *= 2.
             # compute weights (note we absorb extra factor of (-1)^m from complex conjugate)
-            weights_3pcf[ell_1**2+m_1+ell_1] = tmp_fac
+            weights_3pcf[ell_1**2+m_1+ell_1] = tmp_fac*pow(-1.,ell_1)/np.sqrt(2.*ell_1+1.)
 
     np.save('coupling_matrices/weights_3pcf_n%d'%numell,weights_3pcf)
     return weights_3pcf
@@ -222,7 +221,7 @@ def compute_weight_matrix(xmiydivr,zdivr,galwtr,numell):
                                         all_weights[51] = (1./256.)*np.sqrt(1155.)*xmiydivrcu*(221.*zdivrsi-195.*zdivrft+39.*zdivrsq-1.)
                                         all_weights[52] = (3./128.)*np.sqrt(55.)*xmiydivrsq*(221.*zdivrse-273.*zdivrfi+91.*zdivrcu-7.*zdivr)
                                         all_weights[53] = (3./256.)*np.sqrt(5./2.)*xmiydivr*(2431.*zdivret-4004.*zdivrsi+2002.*zdivrft-308.*zdivrsq+7.)
-                                        all_weights[54] = (1./256.)*12155.*(zdivrni-25740.*zdivrse+18018.*zdivrfi-4620.*zdivrcu+315.*zdivr)
+                                        all_weights[54] = (1./256.)*(12155.*zdivrni-25740.*zdivrse+18018.*zdivrfi-4620.*zdivrcu+315.*zdivr)
                                         if numell>10:
                                             # ell = 10
                                             xmiydivrtn=xmiydivrni*xmiydivr # ((x-iy)/r)^10
