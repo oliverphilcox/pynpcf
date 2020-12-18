@@ -94,7 +94,7 @@ cdef class FourPCF():
     # NB: not available in Python-space
     # Note all C arrays are stored in 1D
     cdef double *weights_4pcf
-    cdef int nbins, numell, numell2, n4pcf
+    cdef int nbins, numell, numell2, n4pcf, n4ell
     cdef double *zeta4
     cdef double[:] zeta4_view
 
@@ -119,13 +119,20 @@ cdef class FourPCF():
         # Set number of radial bins in 3PCF with r1<=r2
         self.n4pcf = self.nbins*(1+self.nbins)*(2+self.nbins)//6
 
-        # Initialize 4PCF array of dimension (n_ell, n_ell, n_ell, n_4pcf)
+        # Initialize 4PCF array of dimension (n4ell, n_4pcf)
         # This is where the matrix is physically stored
-        self.zeta4 = <double*>malloc(self.numell*self.numell*self.numell*self.n4pcf*sizeof(double))
+        # n4ell is the number of l1,l2,l3 triples we need, which is computed below
+        self.n4ell = 0
+        for l1 in range(self.numell):
+            for l2 in range(self.numell):
+                for l3 in range(abs(l1-l2),min(self.numell,l1+l2+1)):
+                    if pow(-1,l1+l2+l3)==-1: continue
+                    self.n4ell += 1
+        self.zeta4 = <double*>malloc(self.n4ell*self.n4pcf*sizeof(double))
 
         # Initialize a memory view
         # This is how it is passed to Python
-        self.zeta4_view = <double[:self.numell*self.numell*self.numell*self.n4pcf]>self.zeta4
+        self.zeta4_view = <double[:self.n4ell*self.n4pcf]>self.zeta4
 
         # empty the array
         self.reset()
@@ -133,7 +140,7 @@ cdef class FourPCF():
     cdef void reset(self):
         """Reset the 4PCF array"""
         cdef int i
-        for i in range(self.numell*self.numell*self.numell*self.n4pcf): self.zeta4[i] = 0.
+        for i in range(self.n4ell*self.n4pcf): self.zeta4[i] = 0.
 
     # define python outputs for 4PCF
     @property
@@ -162,6 +169,7 @@ cdef class FourPCF():
         cdef complex[:,:] local_y2_conj
         cdef complex[:,:] local_y3
 
+        tmp_l = 0;
         for l1 in range(self.numell):
             tmp_lm1 = l1*(l1+1)//2
 
@@ -177,13 +185,12 @@ cdef class FourPCF():
                 local_y2 = y_all[tmp_lm2:tmp_lm2+l2+1]
                 local_y2_conj = y_all_conj[tmp_lm2:tmp_lm2+l2+1]
 
-                for l3 in range(max(0,abs(l1-l2)),min(l1+l2+1,self.numell)):
+                for l3 in range(abs(l1-l2),min(l1+l2+1,self.numell)):
 
                     # Skip multipoles with odd parity
                     if pow(-1,l1+l2+l3)==-1: continue
 
                     tmp_lm3 = l3*(l3+1)//2
-                    tmp_l = self.n4pcf*(self.numell*(l1*self.numell+l2)+l3) # for binning later
 
                     # Hold local copies of Y_lm (no conjugate needed here)
                     local_y3 = y_all[tmp_lm3:tmp_lm3+l3+1]
@@ -199,7 +206,9 @@ cdef class FourPCF():
                             a_l1m1 = local_y1_conj[l1-m1]
 
                         for m2 in range(-l2,l2+1):
+
                             m3 = -m1-m2
+
                             if m3>0: continue # absorbed into weights
                             if m3<-l3: continue # not allowed by coupling
 
@@ -227,57 +236,4 @@ cdef class FourPCF():
                                         self.zeta4[i] += (alm1*alm2*a_l3m3[c]).real
                                         i += 1
 
-        #
-        #
-        # for l1 in range(self.numell):
-        #     local_y1 = y_all[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
-        #     local_y1_conj = y_all_conj[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
-        #
-        #     for l2 in range(self.numell):
-        #         local_y2 = y_all[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
-        #         local_y2_conj = y_all_conj[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
-        #
-        #
-        #         for l3 in range(abs(l1-l2),min(l1+l2+1,self.numell)):
-        #
-        #             for m1 in range(-l1,l1+1):
-        #                 # load a_l1m1
-        #                 if m1<0:
-        #                     a_l1m1 = local_y1[l1+m1]
-        #                 else:
-        #                     # nb: extra (-1)^m factor absorbed into weight
-        #                     a_l1m1 = local_y1_conj[l1-m1]
-        #
-        #                 # enforce m1+m2 >= 0 and |m3|<l3 here
-        #                 for m2 in range(max(max(-m1,-l2),-m1-l3),min(l2+1,l3-m1+1)):
-        #
-        #                     # set m3 from m1 + m2 + m3 = 0
-        #                     m3 = -m1-m2
-        #
-        #                     # load a_l2m2
-        #                     if m2<0:
-        #                         a_l2m2 = local_y2[l2+m2]
-        #                     else:
-        #                         # nb: extra (-1)^m factor absorbed into weight
-        #                         a_l2m2 = local_y2_conj[l2-m2]
-        #
-        #                     # NB: we combine (m1,m2,m3) and (-m1,-m2,-m3) terms together
-        #                     # this allows us to skip m3>0, and multiply by 2 [encoded in m2>=-m1 condition above]
-        #                     # if m1=m2=m3=0 we have only one possibiliy, so we multiply by 1
-        #                     # this factor is included in the weights
-        #
-        #                     this_weight = self.weights_4pcf[self.numell*(self.numell2*(l1**2+m1+l1)+l2**2+m2+l2)+l3]
-        #                     if this_weight==0: continue
-        #
-        #                     # load a_l3m3 (m3<=0 always here)
-        #                     a_l3m3 = local_y3[l3+m3]
-        #
-        #                     # Sum up array, noting that we fill only r3>=r2>=r1
-        #                     i = 0
-        #                     for a in range(self.nbins):
-        #                         a1w = prim_weight*a_l1m1[a]*this_weight
-        #                         for b in range(a,self.nbins):
-        #                             a12w = a1w*a_l2m2[b]
-        #                             for c in range(b,self.nbins):
-        #                                 self.zeta4[self.n4pcf*(self.numell*(l1*self.numell+l2)+l3)+i] += (a12w*a_l3m3[c]).real
-        #                                 i += 1
+                    tmp_l += self.n4pcf # update binning counter

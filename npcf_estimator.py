@@ -207,8 +207,6 @@ querytime = 0.
 
 print("\nStarting main computation...\n")
 
-print("We could probably be more efficient with 4PCF binning i.e. not storing all ell triplets")
-
 # Now loop over the iterations
 for i in range(0,totalits):
 
@@ -310,6 +308,7 @@ out_time = time.time()
 zeta3 = ThreePCF.zeta3
 if compute_4PCF:
     zeta4 = FourPCF.zeta4
+    n_4pcf = nbins*(1+nbins)*(2+nbins)//6
 if verb: print("Note that 3PCF output differs from Slepian/Eisenstein expansion by a factor (-1)^l_1 / sqrt(2l_1+1) due to different choice of basis functions")
 
 # Compute bin centers
@@ -344,11 +343,13 @@ print("3PCF saved to %s"%outfile_3pcf)
 
 if compute_4PCF:
     # rebin the output more sensibly
+    # all the bins not allowed by the triangle conditions will be filled with zeros
     zeta4_output = np.zeros((numell,numell,numell,n_4pcf))
     ct = 0
     for l1 in range(numell):
         for l2 in range(numell):
-            for l3 in range(numell):
+            for l3 in range(abs(l1-l2),min(numell,l1+l2+1)):
+                if pow(-1,l1+l2+l3)==-1: continue
                 zeta4_output[l1,l2,l3] = zeta4[ct:ct+n_4pcf]
                 ct += n_4pcf
 

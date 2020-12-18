@@ -114,7 +114,7 @@ def compute_4pcf_coupling_matrix(numell):
                             tmp_fac *= (-1.)**m_2
                         # compute weights
                         weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)*tmp_fac
-
+                        
     np.save('coupling_matrices/weights_4pcf_n%d'%numell,weights_4pcf)
     return weights_4pcf
 
