@@ -18,19 +18,19 @@ from python_utils import *
 ######################## INPUT PARAMETERS ##############################
 
 # These can be defined on command line or set here if not specified
-infile_default = '/projects/QUIJOTE/Oliver/npcf/boss_cmass_sub100_DmR.txt' # input file
-outstr_default = 'test100' # string to prepend to output files
+infile_default = '/projects/QUIJOTE/Oliver/npcf/boss_cmass_sub10_DmR.txt' # input file
+outstr_default = 'test10' # string to prepend to output files
 
 # Binning
 rmax = 170.
 #np.sqrt(3.)*100.
 rmin = 1e-5
 nbins = 5
-numell = 6
+numell = 11
 
 # Other switches (mostly for testing)
 no_weights = False # replace weights with unity
-compute_4PCF = True # else just compute 3PCF
+compute_4PCF = False # else just compute 3PCF
 n_its = 10 # number of iterations to split the computation into (each analyzes N_gal/n_it central galaxies)
 verb = 0 # if True, print useful(?) messages throughout
 
@@ -158,7 +158,10 @@ if compute_4PCF:
     FourPCF = cython_utils.FourPCF(numell, nbins, weights_4pcf)
 
 end_time = time.time()
-print("\n# Time to define 3PCF + 4PCF weighting matrices = %.2e s"%(end_time-start_time))
+if not compute_4PCF:
+    print("\n# Time to define 3PCF weighting matrices = %.2e s"%(end_time-start_time))
+else:
+    print("\n# Time to define 3PCF + 4PCF weighting matrices = %.2e s"%(end_time-start_time))
 
 #################### ASSIGN PARTICLES TO TREE ####################
 

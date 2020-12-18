@@ -1,6 +1,6 @@
 # pynpcf
 
-Code for O(N^2) estimation of three- and four-point isotropic correlation function multipoles, as in Slepian et al. 2016-2021, written in Python/Cython. This is a sister code to the [C++ code](https://github.com/oliverphilcox/NPCF-Estimator). All conventions follow that of the NPCF paper of Slepian et al. (in prep.).
+Code for O(N^2) estimation of three- and four-point isotropic correlation function multipoles, as in Slepian et al. 2016-2021, written in Python/Cython. This is a sister code to the [C++ code](https://github.com/oliverphilcox/NPCF-Estimator), which is more interpretable, though somewhat slower. Whilst the main code is written in pure Python, the most CPU-intensive sections are written in Cython for speed. All conventions follow that of the NPCF paper of Slepian et al. (in prep.).
 
 To run the code, first compile the Cython using ```python setup.py build_ext --inplace```. The main code can then be run using ```python npcf_estimator.py``` and input options are specified within the ```npcf_estimator.py``` script.
 
@@ -11,7 +11,7 @@ Requirements:
 - sympy (for Wigner 3j manipulations)
 
 Authors:
-- Oliver Philcox (Princeton)
+- Oliver Philcox (Princeton / IAS)
 - Zachary Slepian (Florida)
 - Daniel Eisenstein (Harvard)
 
