@@ -96,7 +96,7 @@ cdef class FourPCF():
     cdef double *weights_4pcf
     cdef int nbins, numell, numell2, n4pcf
     cdef double *zeta4
-    cdef double[:,:,:,::1] zeta4_view
+    cdef double[:] zeta4_view
 
     def __cinit__(self, numell, nbins, weights_4pcf):
         """Class to hold and accumulate the 4PCF"""
@@ -125,7 +125,7 @@ cdef class FourPCF():
 
         # Initialize a memory view
         # This is how it is passed to Python
-        self.zeta4_view = <double[:self.numell,:self.numell,:self.numell,:self.n4pcf]>self.zeta4
+        self.zeta4_view = <double[:self.numell*self.numell*self.numell*self.n4pcf]>self.zeta4
 
         # empty the array
         self.reset()
@@ -149,7 +149,7 @@ cdef class FourPCF():
 
         All operations are done in C, besides the read-in of the a_lm arrays"""
 
-        cdef int l1, l2, l3, m1, m2, m3, i
+        cdef int l1, l2, l3, m1, m2, m3, i, tmp_lm1, tmp_lm2, tmp_lm3, tmp_l
         cdef complex[:] a_l1m1
         cdef complex[:] a_l2m2
         cdef complex[:] a_l3m3
@@ -162,22 +162,35 @@ cdef class FourPCF():
         cdef complex[:,:] local_y2_conj
         cdef complex[:,:] local_y3
 
-        ## might be able to preload which bins to sum over, i.e. a list of {L1,L2,L3,M1,M2} etc. and their weights
-        ## this doesn't actually improve things
-
         for l1 in range(self.numell):
-            local_y1 = y_all[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
-            local_y1_conj = y_all_conj[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
+            tmp_lm1 = l1*(l1+1)//2
+
+            # Hold local copies of Y_lm and conjugate
+            local_y1 = y_all[tmp_lm1:tmp_lm1+l1+1]
+            local_y1_conj = y_all_conj[tmp_lm1:tmp_lm1+l1+1]
+
 
             for l2 in range(self.numell):
-                local_y2 = y_all[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
-                local_y2_conj = y_all_conj[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
+                tmp_lm2 = l2*(l2+1)//2
 
+                # Hold local copies of Y_lm and conjugate
+                local_y2 = y_all[tmp_lm2:tmp_lm2+l2+1]
+                local_y2_conj = y_all_conj[tmp_lm2:tmp_lm2+l2+1]
 
-                for l3 in range(abs(l1-l2),min(l1+l2+1,self.numell)):
-                    local_y3 = y_all[l3*(l3+1)//2:(l3+1)*(l3+2)//2]
+                for l3 in range(max(0,abs(l1-l2)),min(l1+l2+1,self.numell)):
 
+                    # Skip multipoles with odd parity
+                    if pow(-1,l1+l2+l3)==-1: continue
+
+                    tmp_lm3 = l3*(l3+1)//2
+                    tmp_l = self.n4pcf*(self.numell*(l1*self.numell+l2)+l3) # for binning later
+
+                    # Hold local copies of Y_lm (no conjugate needed here)
+                    local_y3 = y_all[tmp_lm3:tmp_lm3+l3+1]
+
+                    # Now iterate over m (including both signs)
                     for m1 in range(-l1,l1+1):
+
                         # load a_l1m1
                         if m1<0:
                             a_l1m1 = local_y1[l1+m1]
@@ -185,36 +198,86 @@ cdef class FourPCF():
                             # nb: extra (-1)^m factor absorbed into weight
                             a_l1m1 = local_y1_conj[l1-m1]
 
-                        # enforce m1+m2 >= 0 and |m3|<l3 here
-                        for m2 in range(max(max(-m1,-l2),-m1-l3),min(l2+1,l3-m1+1)):
-
-                            # set m3 from m1 + m2 + m3 = 0
+                        for m2 in range(-l2,l2+1):
                             m3 = -m1-m2
+                            if m3>0: continue # absorbed into weights
+                            if m3<-l3: continue # not allowed by coupling
+
+                            # Compute the coupling weight (and the primary particle weight)
+                            this_weight = prim_weight*self.weights_4pcf[self.numell*(self.numell2*(l1**2+m1+l1)+l2**2+m2+l2)+l3]
+                            if this_weight==0: continue # no contribution
 
                             # load a_l2m2
                             if m2<0:
                                 a_l2m2 = local_y2[l2+m2]
                             else:
-                                # nb: extra (-1)^m factor absorbed into weight
                                 a_l2m2 = local_y2_conj[l2-m2]
 
-                            # NB: we combine (m1,m2,m3) and (-m1,-m2,-m3) terms together
-                            # this allows us to skip m3>0, and multiply by 2 [encoded in m2>=-m1 condition above]
-                            # if m1=m2=m3=0 we have only one possibiliy, so we multiply by 1
-                            # this factor is included in the weights
-
-                            this_weight = self.weights_4pcf[self.numell*(self.numell2*(l1**2+m1+l1)+l2**2+m2+l2)+l3]
-                            if this_weight==0: continue
-
-                            # load a_l3m3 (m3<=0 always here)
+                            # load a_l3m3
                             a_l3m3 = local_y3[l3+m3]
 
-                            # Sum up array, noting that we fill only r3>=r2>=r1
-                            i = 0
+                            # Now iterate over the radial bins, assuming r1<=r2<=r3
+                            i = tmp_l
                             for a in range(self.nbins):
-                                a1w = prim_weight*a_l1m1[a]*this_weight
+                                alm1 = a_l1m1[a]*this_weight
                                 for b in range(a,self.nbins):
-                                    a12w = a1w*a_l2m2[b]
+                                    alm2 = a_l2m2[b]
                                     for c in range(b,self.nbins):
-                                        self.zeta4[self.n4pcf*(self.numell*(l1*self.numell+l2)+l3)+i] += (a12w*a_l3m3[c]).real
+                                        # accumulate 4-point function
+                                        self.zeta4[i] += (alm1*alm2*a_l3m3[c]).real
                                         i += 1
+
+        #
+        #
+        # for l1 in range(self.numell):
+        #     local_y1 = y_all[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
+        #     local_y1_conj = y_all_conj[l1*(l1+1)//2:(l1+1)*(l1+2)//2]
+        #
+        #     for l2 in range(self.numell):
+        #         local_y2 = y_all[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
+        #         local_y2_conj = y_all_conj[l2*(l2+1)//2:(l2+1)*(l2+2)//2]
+        #
+        #
+        #         for l3 in range(abs(l1-l2),min(l1+l2+1,self.numell)):
+        #
+        #             for m1 in range(-l1,l1+1):
+        #                 # load a_l1m1
+        #                 if m1<0:
+        #                     a_l1m1 = local_y1[l1+m1]
+        #                 else:
+        #                     # nb: extra (-1)^m factor absorbed into weight
+        #                     a_l1m1 = local_y1_conj[l1-m1]
+        #
+        #                 # enforce m1+m2 >= 0 and |m3|<l3 here
+        #                 for m2 in range(max(max(-m1,-l2),-m1-l3),min(l2+1,l3-m1+1)):
+        #
+        #                     # set m3 from m1 + m2 + m3 = 0
+        #                     m3 = -m1-m2
+        #
+        #                     # load a_l2m2
+        #                     if m2<0:
+        #                         a_l2m2 = local_y2[l2+m2]
+        #                     else:
+        #                         # nb: extra (-1)^m factor absorbed into weight
+        #                         a_l2m2 = local_y2_conj[l2-m2]
+        #
+        #                     # NB: we combine (m1,m2,m3) and (-m1,-m2,-m3) terms together
+        #                     # this allows us to skip m3>0, and multiply by 2 [encoded in m2>=-m1 condition above]
+        #                     # if m1=m2=m3=0 we have only one possibiliy, so we multiply by 1
+        #                     # this factor is included in the weights
+        #
+        #                     this_weight = self.weights_4pcf[self.numell*(self.numell2*(l1**2+m1+l1)+l2**2+m2+l2)+l3]
+        #                     if this_weight==0: continue
+        #
+        #                     # load a_l3m3 (m3<=0 always here)
+        #                     a_l3m3 = local_y3[l3+m3]
+        #
+        #                     # Sum up array, noting that we fill only r3>=r2>=r1
+        #                     i = 0
+        #                     for a in range(self.nbins):
+        #                         a1w = prim_weight*a_l1m1[a]*this_weight
+        #                         for b in range(a,self.nbins):
+        #                             a12w = a1w*a_l2m2[b]
+        #                             for c in range(b,self.nbins):
+        #                                 self.zeta4[self.n4pcf*(self.numell*(l1*self.numell+l2)+l3)+i] += (a12w*a_l3m3[c]).real
+        #                                 i += 1

@@ -21,22 +21,22 @@ from python_utils import *
 infile_default = '/projects/QUIJOTE/Oliver/npcf/boss_cmass_sub100_DmR.txt' # input file
 outstr_default = 'test100' # string to prepend to output files
 
-cut_number = -1 # maximum number of galaxies to read in. If -1, read in all galaxies
-boxsize = 3300. #size of box used in sample data file.
-rescale = 1. # if you want to rescale the box (unity if not).
-
 # Binning
-rmax = 200.
+rmax = 170.
 #np.sqrt(3.)*100.
 rmin = 1e-5
-nbins = 20
-numell = 11
+nbins = 5
+numell = 6
 
 # Other switches (mostly for testing)
 no_weights = False # replace weights with unity
-compute_4PCF = False # else just compute 3PCF
+compute_4PCF = True # else just compute 3PCF
 n_its = 10 # number of iterations to split the computation into (each analyzes N_gal/n_it central galaxies)
 verb = 0 # if True, print useful(?) messages throughout
+
+cut_number = -1 # maximum number of galaxies to read in. If -1, read in all galaxies
+boxsize = 3300. #size of box used in sample data file.
+rescale = 1. # if you want to rescale the box (unity if not).
 
 assert numell<=11, "# Spherical harmonic weights are configured only up to ell=10!"
 
@@ -207,7 +207,7 @@ querytime = 0.
 
 print("\nStarting main computation...\n")
 
-print("NB: We assume all output NPCFs to be *real* here. Should probably remove odd parity re this")
+print("We could probably be more efficient with 4PCF binning i.e. not storing all ell triplets")
 
 # Now loop over the iterations
 for i in range(0,totalits):
@@ -324,7 +324,8 @@ for a in range(nbins):
         index += 1
 
 if compute_4PCF:
-    bin_centers_4pcf = np.zeros((len(zeta4[0,0,0]),3), np.float64)
+    n_4pcf = nbins*(1+nbins)*(2+nbins)//6
+    bin_centers_4pcf = np.zeros((n_4pcf,3), np.float64)
     index = 0
     for a in range(nbins):
         for b in range(a,nbins):
@@ -342,10 +343,19 @@ np.savez(outfile_3pcf,
 print("3PCF saved to %s"%outfile_3pcf)
 
 if compute_4PCF:
+    # rebin the output more sensibly
+    zeta4_output = np.zeros((numell,numell,numell,n_4pcf))
+    ct = 0
+    for l1 in range(numell):
+        for l2 in range(numell):
+            for l3 in range(numell):
+                zeta4_output[l1,l2,l3] = zeta4[ct:ct+n_4pcf]
+                ct += n_4pcf
+
     outfile_4pcf = 'outputs/%s_4PCF_n%d.npz'%(outstr,numell)
     np.savez(outfile_4pcf,
              bin_centers = bin_centers_4pcf,
-             zeta = zeta4)
+             zeta = zeta4_output)
     print("4PCF saved to %s"%outfile_4pcf)
 
 out_time = time.time() - out_time

@@ -93,27 +93,25 @@ def compute_4pcf_coupling_matrix(numell):
 
     print("Computing 4PCF coupling matrix: this may take some time.")
     for ell_1 in range(numell):
-        for m_1 in range(-ell_1,ell_1+1):
-            for ell_2 in range(numell):
-                for m_2 in range(-ell_2,ell_2+1):
-                    # Enforce triangle condition on ell_1, ell_2, ell_3
-                    for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
+        for ell_2 in range(numell):
+            # Enforce triangle condition on ell_1, ell_2, ell_3
+            for ell_3 in range(np.abs(ell_1-ell_2),min(numell,ell_1+ell_2+1)):
+                for m_1 in range(-ell_1,ell_1+1):
+                    for m_2 in range(-ell_2,ell_2+1):
                         # m_3 is set from triangle condition
                         m_3 = -m_1-m_2
                         # factor missed in spherical harmonic definition
                         tmp_fac = np.sqrt((2.*ell_1+1.)*(2.*ell_2+1.)*(2.*ell_3+1.))/np.sqrt(np.pi**3.)
-                        # add factor of 2x if m_i != 0 by symmetry
-                        if m_1==0 and m_2==0 and m_3==0:
-                            tmp_fac *= 1.
-                        else:
+                        # we only count cases with m1+m2>=0. We add a factor of 2 if m1+m2>0 to account for this.
+                        if m_1+m_2>0:
                             tmp_fac *= 2.
-                        # add factors appearing in complex conjugates
+                        if m_1+m_2<0:
+                            continue # shouldn't use these bins!
+                        # add factors appearing in complex conjugates - we only store Y_lm with m<0
                         if m_1>0:
                             tmp_fac *= (-1.)**m_1
                         if m_2>0:
                             tmp_fac *= (-1.)**m_2
-                        if m_3>0:
-                            continue # not used in code
                         # compute weights
                         weights_4pcf[ell_1**2+m_1+ell_1, ell_2**2+m_2+ell_2, ell_3] = (-1.)**(ell_1+ell_2+ell_3)*wigner_3j(ell_1,ell_2,ell_3,m_1,m_2,m_3)*tmp_fac
 
